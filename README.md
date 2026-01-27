@@ -2,10 +2,18 @@
 
 Implementation of LocalMapper developed by Prof. Yousung Jung group at Seoul National University (contact: yousung@gmail.com).
 
-## Remove code and license announcement (2025.03.28)
-Part of the code and license are removed.
+## 2026.01 Update
+
+The license has been updated to CC BY-NC-SA 4.0 (Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International). This means:
+
+- **Academic use**: Free to use, share, and adapt with attribution
+- **Commercial use**: Not permitted without prior written approval from the copyright holder
+- **Derivative works**: Must be shared under the same license
+
+We encourage academic use of this model, but we wish this will not be used for any commercial used without our permission. For commercial licensing inquiries, please contact the developer.
 
 ## Contents
+
 - [Developer](#developer)
 - [OS Requirements](#os-requirements)
 - [Python Dependencies](#python-dependencies)
@@ -104,32 +112,32 @@ AAM predictions on reactions sampled from [USPTO 50K](https://pubs.acs.org/doi/1
 Go to `LocalMapper/manual/` folder and change name of file `User.user` to `[your-name].user`.
 
 ### [1] Sample the reaction from raw_data
-Downlaod raw data of USPTO_50K from 
+Downlaod raw data of USPTO_50K from
 Go to `LocalMapper/scripts/` folder and run `Sample.py` with -i (iteration) = 1
 ```
 python Sample.py -i 1
 ```
 
 ### [2] Manual map the sampled reaction
-Back to `LocalMapper/manual/` folder and use `Check_atom_mapping.ipynb` to correct the sampled reactions (0: reject and remap, 1: accept, 2: reject and skip). 
+Back to `LocalMapper/manual/` folder and use `Check_atom_mapping.ipynb` to correct the sampled reactions (0: reject and remap, 1: accept, 2: reject and skip).
 **Make sure the templates you generate are chemically correct. The model is very sensitive to these templates.**
 
 
 ### [3] Train LocalMapper model
-Go to the `LocalMapper/scripts/` folder, and run following training code 
+Go to the `LocalMapper/scripts/` folder, and run following training code
 ```
 python Train.py -i 1
 ```
 
 This training process usually takes 3~6 hours to complete using cuda-supporting GPU depending on the number of training reactions.
 
-### [4] Predict the atom-mapping for raw data 
+### [4] Predict the atom-mapping for raw data
 To use the model to predict the atom-mapping on raw reactions, simply run
 ```
 python Test.py -i 1
 ```
 
-### [5] Repeat step [1]~[4] 
+### [5] Repeat step [1]~[4]
 To sample more data for training, sample the data again and train-test the LocalMapper model by changing the arguement `-i`
 To start, you should run
 ```
@@ -151,4 +159,4 @@ python Sample.py -i 2
 ```
 
 ## License
-This project is covered under the **The GNU General Public License v3.0**.
+This project is covered under the **CC BY-NC-SA 4.0 (Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International)** license. See the [LICENSE](LICENSE) file for details.
