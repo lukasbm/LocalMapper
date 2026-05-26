@@ -17,22 +17,20 @@ def reject_template(template):
     return not isinstance(template, str) or template == "mapped" or template == "None"
 
 
-def load_raw_data(args, fixed=False):
-    if fixed:
-        df = pd.read_csv("%s/fixed_data.csv" % args["data_dir"])
-    else:
-        df = pd.read_csv("%s/raw_data.csv" % args["data_dir"])
+def load_raw_data(data_dir, fixed=False):
+    file_name = "fixed_data.csv" if fixed else "raw_data.csv"
+    df = pd.read_csv(Path(data_dir) / file_name)
     trues = []
     for i, (rxn, temp) in enumerate(zip(df["mapped_rxn"], df["template"])):
         trues.append([rxn, temp])
     return trues
 
 
-def load_train_data(args):
+def load_train_data(sample_dir, iteration):
     train_rxns = []
     train_temps = []
-    for i, file in enumerate(glob.glob("%s/fixed_train_*.csv" % args["sample_dir"])):
-        if i >= args["iteration"]:
+    for i, file in enumerate(sorted(glob.glob(str(Path(sample_dir) / "fixed_train_*.csv")))):
+        if i >= iteration:
             break
         df = pd.read_csv(file)
         train_rxns += df["mapped_rxn"].tolist()
@@ -40,16 +38,16 @@ def load_train_data(args):
     return train_rxns, train_temps
 
 
-def load_prediction(args, load_prev=False, skip=False):
+def load_prediction(output_dir, iteration, load_prev=False, skip=False):
     predictions = []
     if load_prev:
-        load_iter = args["iteration"] - 1
+        load_iter = iteration - 1
     else:
-        load_iter = args["iteration"]
+        load_iter = iteration
     if skip:
-        file = "%s/pred_%d_skip.txt" % (args["output_dir"], load_iter)
+        file = Path(output_dir) / f"pred_{load_iter}_skip.txt"
     else:
-        file = "%s/pred_%d_full.txt" % (args["output_dir"], load_iter)
+        file = Path(output_dir) / f"pred_{load_iter}_full.txt"
     with open(file, "r") as f:
         for i, line in enumerate(f.readlines()):
             if i == 0:
@@ -58,25 +56,29 @@ def load_prediction(args, load_prev=False, skip=False):
     return predictions
 
 
-def sample_reactions(args):
-    trues = load_raw_data(args)
-    mkdir_p(args["sample_dir"])
-    fixed_data = "%s/fixed_train_%d.csv" % (args["sample_dir"], args["iteration"] - 1)
+def sample_reactions(
+    data_dir,
+    sample_dir,
+    output_dir,
+    iteration,
+    sample_n,
+    sample_limit,
+    skip=False,
+):
+    trues = load_raw_data(data_dir)
+    mkdir_p(sample_dir)
+    fixed_data = Path(sample_dir) / f"fixed_train_{iteration - 1}.csv"
     if os.path.exists(fixed_data):
-        if os.path.exists(
-            "%s/fixed_train_%d.csv" % (args["sample_dir"], args["iteration"])
-        ):
-            print(
-                "Train data for iteration %d is already sampled and fixed."
-                % args["iteration"]
-            )
+        current_fixed = Path(sample_dir) / f"fixed_train_{iteration}.csv"
+        if os.path.exists(current_fixed):
+            print(f"Train data for iteration {iteration} is already sampled and fixed.")
             return
-        elif len(glob.glob("%s/fixed_train_*.csv" % args["sample_dir"])) > 0:
-            predictions = load_prediction(args, True)
-            accepted_templates, rejected_templates = load_fixed_templates(args, True)
-            print(
-                "%d rejected tempaltes:" % len(rejected_templates), rejected_templates
+        elif len(glob.glob(str(Path(sample_dir) / "fixed_train_*.csv"))) > 0:
+            predictions = load_prediction(output_dir, iteration, load_prev=True, skip=skip)
+            accepted_templates, rejected_templates = load_fixed_templates(
+                sample_dir, iteration, load_prev=True
             )
+            print(f"{len(rejected_templates)} rejected templates:", rejected_templates)
             new_templates = defaultdict(list)
             conf_idxs, conf_rxns, conf_temps = [], [], []
             for prediction in predictions:
@@ -95,40 +97,34 @@ def sample_reactions(args):
             }
             sampled_idxs = []
             template_freqs = []
+            freq = 0
             for template, rxn_idxs in sorted_templates.items():
                 freq = len(rxn_idxs)
                 sampled_idx = np.random.choice(
-                    rxn_idxs, min([freq, args["sample_n"]]), replace=False
+                    rxn_idxs, min([freq, sample_n]), replace=False
                 )
                 sampled_idxs += list(sampled_idx)
                 template_freqs += [freq] * len(sampled_idx)
-                if len(sampled_idxs) >= args["sample_limit"]:
+                if len(sampled_idxs) >= sample_limit:
                     break
             sampled_rxns = [trues[i][0] for i in sampled_idxs]
-            sampled_preds = [predictions[i][1] for i in sampled_idxs]
             sampled_temps = [trues[i][1] for i in sampled_idxs]
-            print(
-                "Sampled %d reactions showing rxns >= %d times"
-                % (len(sampled_idxs), freq)
-            )
+            print(f"Sampled {len(sampled_idxs)} reactions showing rxns >= {freq} times")
 
     else:
         conf_idxs, conf_rxns, conf_temps = [], [], []
         sampled_idxs = list(
-            np.random.choice(np.arange(len(trues)), args["sample_limit"], replace=False)
+            np.random.choice(np.arange(len(trues)), sample_limit, replace=False)
         )
-        sampled_preds = ["" for i in sampled_idxs]
         sampled_rxns = [trues[i][0] for i in sampled_idxs]
         sampled_temps = [trues[i][1] for i in sampled_idxs]
         template_freqs = [0 for i in sampled_idxs]
-        print("Sampled %d random rxns" % len(sampled_idxs))
+        print(f"Sampled {len(sampled_idxs)} random rxns")
 
     conf_df = pd.DataFrame(
         {"data_idx": conf_idxs, "mapped_rxn": conf_rxns, "template": conf_temps}
     )
-    conf_df.to_csv(
-        "%s/conf_pred_%d.csv" % (args["sample_dir"], args["iteration"]), index=None
-    )
+    conf_df.to_csv(Path(sample_dir) / f"conf_pred_{iteration}.csv", index=None)
     sample_df = pd.DataFrame(
         {
             "data_idx": sampled_idxs,
@@ -137,33 +133,32 @@ def sample_reactions(args):
             "freq": template_freqs,
         }
     )
-    sample_df.to_csv(
-        "%s/pred_train_%d.csv" % (args["sample_dir"], args["iteration"]), index=None
-    )
+    sample_df.to_csv(Path(sample_dir) / f"pred_train_{iteration}.csv", index=None)
     return
 
 
 def main(
     dataset="USPTO_50K",
     iteration=1,
-    skip=0,
+    skip=False,
     sample_n=1,
     sample_limit=200,
 ):
-    args = {
-        "dataset": dataset,
-        "iteration": iteration,
-        "skip": skip,
-        "sample_n": sample_n,
-        "sample_limit": sample_limit,
-    }
-    args["chemist_name"] = get_user_name(args)
-    print("Sampling... chemist name: %s" % (args["chemist_name"]))
+    chemist_name = get_user_name()
+    print("Sampling... chemist name: %s" % chemist_name)
 
-    args["data_dir"] = str(ROOT / "data" / args["dataset"])
-    args["sample_dir"] = "%s/%s" % (args["data_dir"], args["chemist_name"])
-    args["output_dir"] = str(ROOT / "outputs" / args["dataset"] / args["chemist_name"])
-    sample_reactions(args)
+    data_dir = str(ROOT / "data" / dataset)
+    sample_dir = Path(data_dir) / chemist_name
+    output_dir = str(ROOT / "outputs" / dataset / chemist_name)
+    sample_reactions(
+        data_dir=data_dir,
+        sample_dir=sample_dir,
+        output_dir=output_dir,
+        iteration=iteration,
+        sample_n=sample_n,
+        sample_limit=sample_limit,
+        skip=skip,
+    )
 
 
 if __name__ == "__main__":

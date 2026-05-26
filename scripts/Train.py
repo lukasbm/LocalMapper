@@ -17,18 +17,29 @@ from localmapper.dataset import mkdir_p
 from localmapper.utils import predict
 
 
-def run_a_train_epoch(args, epoch, model, data_loader, loss_criterion, optimizer):
+def run_a_train_epoch(
+    epoch,
+    model,
+    data_loader,
+    loss_criterion,
+    optimizer,
+    device,
+    learning_rate,
+    max_clip,
+    print_every,
+    num_epochs,
+):
     if epoch < 0:  # warmup
-        optimizer.param_groups[0]["lr"] = args["learning_rate"] * 0.001
+        optimizer.param_groups[0]["lr"] = learning_rate * 0.001
     model.train()
     train_loss = 0
     for batch_id, batch_data in enumerate(data_loader):
         idxs, rxns, rbg, pbg, labels_list, masks_list, weight_list = batch_data
         labels_list, masks_list = (
-            [labels.to(args["device"]) for labels in labels_list],
-            [masks.to(args["device"]) for masks in masks_list],
+            [labels.to(device) for labels in labels_list],
+            [masks.to(device) for masks in masks_list],
         )
-        logits_list = predict(args, model, rbg, pbg)
+        logits_list = predict(model, device, rbg, pbg)
         loss = 0
         total_weights = 0
         for logits, labels, masks, weight in zip(
@@ -41,32 +52,32 @@ def run_a_train_epoch(args, epoch, model, data_loader, loss_criterion, optimizer
         loss = loss / total_weights
         optimizer.zero_grad()
         loss.backward()
-        nn.utils.clip_grad_norm_(model.parameters(), args["max_clip"])
+        nn.utils.clip_grad_norm_(model.parameters(), max_clip)
         optimizer.step()
         train_loss += loss.item()
-        if batch_id % args["print_every"] == 0:
+        if batch_id % print_every == 0:
             print(
                 "\repoch %d/%d, batch %d/%d, loss %.4f"
-                % (epoch + 1, args["num_epochs"], batch_id + 1, len(data_loader), loss),
+                % (epoch + 1, num_epochs, batch_id + 1, len(data_loader), loss),
                 end="",
                 flush=True,
             )
     if epoch < 0:
-        optimizer.param_groups[0]["lr"] = args["learning_rate"]
+        optimizer.param_groups[0]["lr"] = learning_rate
     return
 
 
-def run_an_val_epoch(args, model, data_loader, loss_criterion):
+def run_an_val_epoch(model, data_loader, loss_criterion, device):
     model.eval()
     val_loss = 0
     with torch.no_grad():
         for batch_id, batch_data in enumerate(data_loader):
             idxs, rxns, rbg, pbg, labels_list, masks_list, weight_list = batch_data
             labels_list, masks_list = (
-                [labels.to(args["device"]) for labels in labels_list],
-                [masks.to(args["device"]) for masks in masks_list],
+                [labels.to(device) for labels in labels_list],
+                [masks.to(device) for masks in masks_list],
             )
-            logits_list = predict(args, model, rbg, pbg)
+            logits_list = predict(model, device, rbg, pbg)
             loss = 0
             total_weights = 0
             for logits, labels, masks, weight in zip(
@@ -96,47 +107,65 @@ def main(
     schedule_step=10,
     print_every=20,
 ):
-    args = {
-        "gpu": gpu,
-        "dataset": dataset,
-        "config": config,
-        "batch_size": batch_size,
-        "num_epochs": num_epochs,
-        "patience": patience,
-        "iteration": iteration,
-        "max_clip": max_clip,
-        "learning_rate": learning_rate,
-        "weight_decay": weight_decay,
-        "schedule_step": schedule_step,
-        "print_every": print_every,
-    }
-    args["mode"] = "train"
-    args["chemist_name"] = get_user_name(args)
-    args["device"] = (
-        torch.device(args["gpu"]) if torch.cuda.is_available() else torch.device("cpu")
-    )
-    print(
-        "Trianing with device %s, chemist name: %s"
-        % (args["device"], args["chemist_name"])
-    )
+    chemist_name = get_user_name()
+    device = torch.device(gpu) if torch.cuda.is_available() else torch.device("cpu")
+    print("Training with device %s, chemist name: %s" % (device, chemist_name))
 
-    model_name = "LocalMapper_%d.pth" % (args["iteration"])
-    args["data_dir"] = str(ROOT / "data" / args["dataset"])
-    args["model_dir"] = str(ROOT / "models" / args["dataset"] / args["chemist_name"])
-    args["model_path"] = str(Path(args["model_dir"]) / model_name)
-    mkdir_p(args["model_dir"])
+    data_dir = str(ROOT / "data" / dataset)
+    sample_dir = Path(data_dir) / chemist_name
+    model_dir = str(ROOT / "models" / dataset / chemist_name)
+    model_path = str(Path(model_dir) / f"LocalMapper_{iteration}.pth")
+    config_path = str(ROOT / "data" / "configs" / config)
+    mkdir_p(model_dir)
 
-    args = init_featurizer(args)
-    args["config_path"] = str(ROOT / "data" / "configs" / args["config"])
-    train_loader, val_loader = load_dataloader(args)
-    model, loss_criterion, optimizer, scheduler, stopper = load_train_components(args)
-    run_a_train_epoch(args, -1, model, train_loader, loss_criterion, optimizer)
-    for epoch in range(args["num_epochs"]):
-        run_a_train_epoch(args, epoch, model, train_loader, loss_criterion, optimizer)
+    node_featurizer, edge_featurizer, mol_to_graph = init_featurizer()
+    train_loader, val_loader = load_dataloader(
+        data_dir,
+        "train",
+        mol_to_graph,
+        batch_size=batch_size,
+        iteration=iteration,
+        sample_dir=sample_dir,
+    )
+    model, loss_criterion, optimizer, scheduler, stopper = load_train_components(
+        config_path,
+        node_featurizer,
+        edge_featurizer,
+        device,
+        learning_rate,
+        weight_decay,
+        patience,
+        model_path,
+    )
+    run_a_train_epoch(
+        -1,
+        model,
+        train_loader,
+        loss_criterion,
+        optimizer,
+        device,
+        learning_rate,
+        max_clip,
+        print_every,
+        num_epochs,
+    )
+    for epoch in range(num_epochs):
+        run_a_train_epoch(
+            epoch,
+            model,
+            train_loader,
+            loss_criterion,
+            optimizer,
+            device,
+            learning_rate,
+            max_clip,
+            print_every,
+            num_epochs,
+        )
         if len(val_loader) == 0:
             val_loss = 1 / (epoch + 1)
         else:
-            val_loss = run_an_val_epoch(args, model, val_loader, loss_criterion)
+            val_loss = run_an_val_epoch(model, val_loader, loss_criterion, device)
             print(", validation loss: %.4f" % val_loss)
         early_stop = stopper.step(val_loss, model)
         scheduler.step(val_loss)

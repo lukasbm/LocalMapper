@@ -19,10 +19,17 @@ from localmapper.utils import predict
 from localmapper.atom_mapper import prediction2map
 
 
-def get_atom_map(args, model, data_loader):
+def get_atom_map(
+    output_dir,
+    iteration,
+    try_twice,
+    accepted_templates,
+    model,
+    device,
+    data_loader,
+):
     model.eval()
-    file_path = str(Path(args["output_dir"]) / f"pred_{args['iteration']}.txt")
-    accepted_templates, _ = load_fixed_templates(args)
+    file_path = Path(output_dir) / f"pred_{iteration}.txt"
     with open(file_path, "w") as f:
         f.write("Reaction_id\tMapped_reaction\tTemplate\n")
         with torch.no_grad():
@@ -30,18 +37,16 @@ def get_atom_map(args, model, data_loader):
                 data_loader, total=len(data_loader), desc="Predicting AAM..."
             ):
                 idxs, rxns, rbg, pbg, _, _, _ = batch_data
-                logits_list = predict(args, model, rbg, pbg)
+                logits_list = predict(model, device, rbg, pbg)
                 for rxn, logits, idx in zip(rxns, logits_list, idxs):
                     prediction = torch.softmax(logits, dim=1).cpu().numpy()
                     result = prediction2map(rxn, prediction)
                     if (
-                        args["try_twice"]
+                        try_twice
                         and result["template"] not in accepted_templates
                     ):
                         result = prediction2map(rxn, prediction, neighbor_weight=90)
-                    f.write(
-                        "%s\t%s\t%s\n" % (idx, result["mapped_rxn"], result["template"])
-                    )
+                    f.write(f"{idx}\t{result['mapped_rxn']}\t{result['template']}\n")
     return
 
 
@@ -53,40 +58,47 @@ def main(
     dataset="USPTO_50K",
     try_twice=False,
 ):
-    args = {
-        "gpu": gpu,
-        "config": config,
-        "batch_size": batch_size,
-        "iteration": iteration,
-        "dataset": dataset,
-        "try_twice": try_twice,
-    }
-    args["mode"] = "test"
-    args["chemist_name"] = get_user_name(args)
-    args["device"] = (
-        torch.device(args["gpu"]) if torch.cuda.is_available() else torch.device("cpu")
-    )
+    chemist_name = get_user_name()
+    device = torch.device(gpu) if torch.cuda.is_available() else torch.device("cpu")
     print(
         "Testing with device %s, chemist name %s"
-        % (args["device"], args["chemist_name"])
+        % (device, chemist_name)
     )
 
-    args["data_dir"] = str(ROOT / "data" / args["dataset"])
-    args["output_dir"] = str(ROOT / "outputs" / args["dataset"] / args["chemist_name"])
-    args["model_path"] = str(
+    data_dir = str(ROOT / "data" / dataset)
+    sample_dir = Path(data_dir) / chemist_name
+    output_dir = str(ROOT / "outputs" / dataset / chemist_name)
+    model_path = str(
         ROOT
         / "models"
-        / args["dataset"]
-        / args["chemist_name"]
-        / f"LocalMapper_{args['iteration']}.pth"
+        / dataset
+        / chemist_name
+        / f"LocalMapper_{iteration}.pth"
     )
-    args["config_path"] = str(ROOT / "data" / "configs" / args["config"])
-    mkdir_p(args["output_dir"])
+    config_path = str(ROOT / "data" / "configs" / config)
+    mkdir_p(output_dir)
 
-    args = init_featurizer(args)
-    test_loader = load_dataloader(args, test=True)
-    model = load_test_model(args)
-    get_atom_map(args, model, test_loader)
+    node_featurizer, edge_featurizer, mol_to_graph = init_featurizer()
+    test_loader = load_dataloader(
+        data_dir,
+        "test",
+        mol_to_graph,
+        batch_size=batch_size,
+        iteration=iteration,
+    )
+    model = load_test_model(
+        config_path, node_featurizer, edge_featurizer, device, model_path
+    )
+    accepted_templates, _ = load_fixed_templates(sample_dir, iteration)
+    get_atom_map(
+        output_dir,
+        iteration,
+        try_twice,
+        accepted_templates,
+        model,
+        device,
+        test_loader,
+    )
 
 
 if __name__ == "__main__":

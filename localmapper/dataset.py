@@ -1,3 +1,4 @@
+from pathlib import Path
 import os
 import errno
 import numpy as np
@@ -6,6 +7,8 @@ from tqdm import tqdm
 from collections import defaultdict
 
 from rdkit import Chem
+
+from .utils import get_user_name
 
 
 def mkdir_p(path):
@@ -71,39 +74,46 @@ def canonicalize_map_rxn(rxn):
 
 
 class ReactionDataset(object):
-    def __init__(self, args):
-        df = pd.read_csv("%s/raw_data.csv" % (args["data_dir"]))
-        self.mode = args["mode"]
+    def __init__(
+        self,
+        data_dir,
+        mode,
+        mol_to_graph,
+        sample_dir,
+        iteration=1,
+    ):
+        data_dir = Path(data_dir)
+        sample_dir = Path(sample_dir)
+
+        df = pd.read_csv(data_dir / "raw_data.csv")
+        self.mode = mode
         self.rxns = df["mapped_rxn"].tolist()
         self.idxs = [idx for idx in range(len(self.rxns))]
         self.labels = [[] for _ in range(len(self.rxns))]
         self.weights = [1] * len(self.rxns)
-        self.mol_to_graph = args["mol_to_graph"]
+        self.mol_to_graph = mol_to_graph
+        self.data_dir = data_dir
+        self.sample_dir = sample_dir
+        self.iteration = iteration
         if self.mode == "train":
-            self._load_conf_rxns(args)
+            self._load_conf_rxns()
             self._make_graphs()
         else:
             self.train_idx, self.val_idx, self.test_idx = [], [], self.idxs
 
-    def _load_conf_rxns(self, args):
+    def _load_conf_rxns(self):
         print("Preparing AAM labels...")
         train_idx, val_idx = set(), set()
         mapped_rxns = {}
-        for i in range(args["iteration"]):
-            manual_df = pd.read_csv(
-                "%s/%s/fixed_train_%d.csv"
-                % (args["data_dir"], args["chemist_name"], i + 1)
-            )
+        for i in range(self.iteration):
+            manual_df = pd.read_csv(self.sample_dir / f"fixed_train_{i + 1}.csv")
             for idx, rxn in zip(manual_df["data_idx"], manual_df["mapped_rxn"]):
                 train_idx.add(idx)
                 mapped_rxns[idx] = rxn
                 self.weights[idx] = 100
         print("Load %d reactions from fixed predictions" % len(mapped_rxns))
 
-        conf_df = pd.read_csv(
-            "%s/%s/conf_pred_%d.csv"
-            % (args["data_dir"], args["chemist_name"], args["iteration"])
-        )
+        conf_df = pd.read_csv(self.sample_dir / f"conf_pred_{self.iteration}.csv")
         templates_idx = defaultdict(list)
         for i in conf_df.index:
             data_idx = conf_df["data_idx"][i]
