@@ -146,6 +146,44 @@ def load_model(exp_config, model_path, device):
     return model
 
 
+def load_model2(args):
+    exp_config = get_configure(args)
+    model = LocalMapper(
+        node_in_feats=exp_config["in_node_feats"],
+        edge_in_feats=exp_config["in_edge_feats"],
+        node_out_feats=exp_config["node_out_feats"],
+        edge_hidden_feats=exp_config["edge_hidden_feats"],
+        num_step_message_passing=exp_config["num_step_message_passing"],
+        attention_heads=exp_config["attention_heads"],
+        attention_layers=exp_config["attention_layers"],
+    )
+    model = model.to(args["device"])
+
+    if args["mode"] == "train":
+        # loss_criterion = Twoway_CrossEntropyLoss
+        loss_criterion = nn.CrossEntropyLoss()
+        optimizer = Adam(
+            model.parameters(),
+            lr=args["learning_rate"],
+            weight_decay=args["weight_decay"],
+        )
+        scheduler = lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode="min", factor=0.5, patience=1, min_lr=1e-4
+        )
+        stopper = EarlyStopping(
+            mode="lower", patience=args["patience"], filename=args["model_path"]
+        )
+        return model, loss_criterion, optimizer, scheduler, stopper
+
+    else:
+        model.load_state_dict(
+            torch.load(args["model_path"], map_location=args["device"])[
+                "model_state_dict"
+            ]
+        )
+        return model
+
+
 def predict(model, device, rgraphs, pgraphs):
     rbg, pbg = dgl.batch(rgraphs), dgl.batch(pgraphs)
     (
@@ -170,3 +208,114 @@ def predict(model, device, rgraphs, pgraphs):
             rbg, pbg, rnode_feats, pnode_feats, redge_feats, pedge_feats
         )
     return predicitons
+
+
+def demap(smiles):
+    mol = Chem.MolFromSmiles(smiles)
+    [atom.SetAtomMapNum(0) for atom in mol.GetAtoms()]
+    return Chem.MolToSmiles(mol)
+
+
+def is_valid_mapping(smiles):
+    mol = Chem.MolFromSmiles(smiles)
+    atom_maps = [
+        atom.GetAtomMapNum() for atom in mol.GetAtoms() if atom.GetAtomMapNum() > 0
+    ]
+    return len(atom_maps) == len(set(atom_maps))
+
+
+def save_reaction(rxn, path="mol.png"):
+    img = Chem.Draw.MolsToGridImage(
+        [Chem.MolFromSmiles(s) for s in rxn.split(">>")],
+        returnPNG=False,
+        molsPerRow=2,
+        subImgSize=(400, 300),
+    )
+    path = "mol.png"
+    img.save(path)
+    return
+
+
+def clean_map(rxn):
+    r_mol, p_mol = [Chem.MolFromSmiles(s) for s in rxn.split(">>")]
+    p_maps = [atom.GetAtomMapNum() for atom in p_mol.GetAtoms()]
+    [
+        atom.SetAtomMapNum(0)
+        for atom in r_mol.GetAtoms()
+        if atom.GetAtomMapNum() not in p_maps
+    ]
+    return ">>".join([Chem.MolToSmiles(m) for m in [r_mol, p_mol]])
+
+
+
+def trash_loop():
+    chemist_name = get_user_name()
+    dataset = "USPTO_50K"
+
+    samp_iter = 1
+    sampled_data = load_sampled_data(dataset, chemist_name, samp_iter)
+    accepted_templates, rejected_templates = load_fixed_templates(
+        dataset, chemist_name, samp_iter
+    )
+    remapped_rxn_dict = {}
+    remapped_temp_dict = {}
+    
+    ## Manually check AAM
+    # 0: remap, 1: accept, 2: reject reaction
+    for i, (idx, rxn, temp, freq) in enumerate(
+        zip(
+            sampled_data["data_idx"],
+            sampled_data["mapped_rxn"],
+            sampled_data["template"],
+            sampled_data["freq"],
+        )
+    ):  # remap: reject, 1: accept, 2: reject
+        if idx in remapped_rxn_dict:
+            continue
+        rxn = clean_map(rxn)
+        r, p = rxn.split(">>")
+        temp = extract_from_reaction(rxn)
+        answer = "1"
+
+        while True:
+            if temp in accepted_templates:
+                answer = "1"
+                break
+            print(rxn)
+            print("Reactant: \n", r)
+            print("Template: \n", temp)
+            print("Frequency: \n", freq)
+            save_reaction(rxn)
+            display(Image.open("mol.png"))
+            answer = input("Correct (%d/%d)?" % (i, len(sampled_data)))
+            if answer in ["1", "2"]:
+                break
+            remap = input("Remap (%d/%d)..." % (i, len(sampled_data)))
+            if not is_valid_mapping(remap):
+                print("Not valid mapping!")
+                continue
+            else:
+                r = remap
+            rxn = "%s>>%s" % (r, p)
+            temp = extract_from_reaction(rxn)
+
+        save_reaction(rxn)
+        display(Image.open("mol.png"))
+        if answer == "1":
+            remapped_rxn_dict[idx] = rxn
+            remapped_temp_dict[idx] = temp
+            accepted_templates.add(temp)
+
+        clear_output(wait=True)
+
+    # Sort the reaction idex before exporting
+    remapped_idxs, remapped_rxns, remapped_temps = [], [], []
+    for idx in sorted(list(remapped_temp_dict.keys())):
+        remapped_idxs.append(idx)
+        remapped_rxns.append(remapped_rxn_dict[idx])
+        remapped_temps.append(remapped_temp_dict[idx])
+    df = pd.DataFrame(
+        {"data_idx": remapped_idxs, "mapped_rxn": remapped_rxns, "template": remapped_temps}
+    )
+    save_fixed_data(df, dataset, chemist_name, samp_iter)
+
