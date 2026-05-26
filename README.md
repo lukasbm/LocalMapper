@@ -113,9 +113,9 @@ Go to `LocalMapper/manual/` folder and change name of file `User.user` to `[your
 
 ### [1] Sample the reaction from raw_data
 Downlaod raw data of USPTO_50K from
-Go to `LocalMapper/scripts/` folder and run `Sample.py` with -i (iteration) = 1
+From the repository root, run the sampler with `python -m scripts.Sample --iteration=1`
 ```
-python Sample.py -i 1
+python -m scripts.Sample --iteration=1
 ```
 
 ### [2] Manual map the sampled reaction
@@ -124,9 +124,9 @@ Back to `LocalMapper/manual/` folder and use `Check_atom_mapping.ipynb` to corre
 
 
 ### [3] Train LocalMapper model
-Go to the `LocalMapper/scripts/` folder, and run following training code
+From the repository root, run the training code
 ```
-python Train.py -i 1
+python -m scripts.Train --iteration=1
 ```
 
 This training process usually takes 3~6 hours to complete using cuda-supporting GPU depending on the number of training reactions.
@@ -134,14 +134,14 @@ This training process usually takes 3~6 hours to complete using cuda-supporting 
 ### [4] Predict the atom-mapping for raw data
 To use the model to predict the atom-mapping on raw reactions, simply run
 ```
-python Test.py -i 1
+python -m scripts.Test --iteration=1
 ```
 
 ### [5] Repeat step [1]~[4]
 To sample more data for training, sample the data again and train-test the LocalMapper model by changing the arguement `-i`
 To start, you should run
 ```
-python Sample.py -i 2
+python -m scripts.Sample --iteration=2
 ```
 
 ## Publication

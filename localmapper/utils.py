@@ -247,7 +247,6 @@ def clean_map(rxn):
     return ">>".join([Chem.MolToSmiles(m) for m in [r_mol, p_mol]])
 
 
-
 def trash_loop():
     chemist_name = get_user_name()
     dataset = "USPTO_50K"
@@ -259,7 +258,7 @@ def trash_loop():
     )
     remapped_rxn_dict = {}
     remapped_temp_dict = {}
-    
+
     ## Manually check AAM
     # 0: remap, 1: accept, 2: reject reaction
     for i, (idx, rxn, temp, freq) in enumerate(
@@ -315,7 +314,10 @@ def trash_loop():
         remapped_rxns.append(remapped_rxn_dict[idx])
         remapped_temps.append(remapped_temp_dict[idx])
     df = pd.DataFrame(
-        {"data_idx": remapped_idxs, "mapped_rxn": remapped_rxns, "template": remapped_temps}
+        {
+            "data_idx": remapped_idxs,
+            "mapped_rxn": remapped_rxns,
+            "template": remapped_temps,
+        }
     )
     save_fixed_data(df, dataset, chemist_name, samp_iter)
-

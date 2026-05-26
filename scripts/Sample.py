@@ -1,11 +1,16 @@
-from argparse import ArgumentParser
+from pathlib import Path
 from collections import defaultdict
 import glob
 import os
+
+import fire
 import numpy as np
 import pandas as pd
 
-from utils import get_user_name, mkdir_p
+ROOT = Path(__file__).resolve().parents[1]
+
+from localmapper.cli_utils import get_user_name, load_fixed_templates
+from localmapper.dataset import mkdir_p
 
 
 def reject_template(template):
@@ -51,39 +56,6 @@ def load_prediction(args, load_prev=False, skip=False):
                 continue
             predictions.append(line.split("\n")[0].split("\t"))
     return predictions
-
-
-def load_templates(args, files, load_prev):
-    loaded_templates = set()
-    for i, file in enumerate(files):
-        iteration = int(file.split("_")[-1].split(".")[0])
-        if iteration > args["iteration"] or (
-            load_prev and iteration == args["iteration"]
-        ):
-            continue
-        df = pd.read_csv(file)
-        for template in df.template:
-            loaded_templates.add(template)
-    return loaded_templates
-
-
-def load_fixed_templates(args, load_prev=False):
-    if "sample_dir" not in args:
-        args["sample_dir"] = "%s/%s" % (args["data_dir"], args["chemist_name"])
-    pred_templates = load_templates(
-        args, glob.glob("%s/pred_train_*.csv" % args["sample_dir"]), load_prev
-    )
-    conf_templates = load_templates(
-        args, glob.glob("%s/conf_pred_*.csv" % args["sample_dir"]), load_prev
-    )
-    accepted_templates = load_templates(
-        args, glob.glob("%s/fixed_train_*.csv" % args["sample_dir"]), load_prev
-    )
-    accepted_templates = accepted_templates.union(conf_templates)
-    rejected_templates = set(
-        [template for template in pred_templates if template not in accepted_templates]
-    )
-    return accepted_templates, rejected_templates
 
 
 def sample_reactions(args):
@@ -171,35 +143,28 @@ def sample_reactions(args):
     return
 
 
-def main(args):
+def main(
+    dataset="USPTO_50K",
+    iteration=1,
+    skip=0,
+    sample_n=1,
+    sample_limit=200,
+):
+    args = {
+        "dataset": dataset,
+        "iteration": iteration,
+        "skip": skip,
+        "sample_n": sample_n,
+        "sample_limit": sample_limit,
+    }
     args["chemist_name"] = get_user_name(args)
     print("Sampling... chemist name: %s" % (args["chemist_name"]))
 
-    args["data_dir"] = "../data/%s/" % args["dataset"]
+    args["data_dir"] = str(ROOT / "data" / args["dataset"])
     args["sample_dir"] = "%s/%s" % (args["data_dir"], args["chemist_name"])
-    args["output_dir"] = "../outputs/%s/%s/" % (args["dataset"], args["chemist_name"])
+    args["output_dir"] = str(ROOT / "outputs" / args["dataset"] / args["chemist_name"])
     sample_reactions(args)
 
 
 if __name__ == "__main__":
-    parser = ArgumentParser("LocalMapper testing arguements")
-    parser.add_argument("-d", "--dataset", default="USPTO_50K", help="Dataset to use")
-    parser.add_argument(
-        "-i", "--iteration", type=int, default=1, help="Iteration of active learning"
-    )
-    parser.add_argument(
-        "-s", "--skip", type=int, default=0, help="Skip confidence prediction or not"
-    )
-    parser.add_argument(
-        "-sn",
-        "--sample-n",
-        type=int,
-        default=1,
-        help="Number of reaction sampled for each template",
-    )
-    parser.add_argument(
-        "-sl", "--sample-limit", type=int, default=200, help="The limit of sampling"
-    )
-
-    args = parser.parse_args().__dict__
-    main(args)
+    fire.Fire(main)

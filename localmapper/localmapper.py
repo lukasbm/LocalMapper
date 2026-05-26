@@ -1,47 +1,20 @@
 import pickle
 import torch
 
-from pkg_resources import resource_filename
 
 from rdkit import Chem
 
 from .utils import *
 from .mapper import prediction2map
-
-
-def get_rdkit_rxn(rxn):
-    def demap(smi):
-        mol = Chem.MolFromSmiles(smi)
-        [atom.SetAtomMapNum(0) for atom in mol.GetAtoms()]
-        return Chem.MolToSmiles(mol)
-
-    reactant, product = rxn.split(">>")
-    rxn = demap(reactant) + ">>" + demap(product)
-    rdkit_rxn = Chem.rdChemReactions.ReactionFromSmarts(rxn, useSmiles=True)
-    return Chem.Draw.ReactionToImage(
-        rdkit_rxn,
-        subImgSize=(320, 700),
-    )
+import os
 
 
 class localmapper:
-    def __init__(self, device="cpu", model_version="202403"):
-        self.device = (
-            torch.device(device) if torch.cuda.is_available() else torch.device("cpu")
-        )
-        print(
-            "Loaded LocalMapper (version=%s) at device %s"
-            % (model_version, self.device)
-        )
-
-        config_path = resource_filename("localmapper", "data/default_config.json")
-        template_path = resource_filename(
-            "localmapper", "data/templates_%s.pkl" % model_version
-        )
-        model_path = resource_filename(
-            "localmapper", "data/LocalMapper_%s.pth" % model_version
-        )
-
+    def __init__(self, device=torch.device("cpu"), model_version="202403"):
+        self.device = device
+        config_path = "default_config.json"
+        template_path = os.path.join("data", f"templates_{model_version}.pkl")
+        model_path = os.path.join("data", f"LocalMapper_{model_version}.pth")
         with open(template_path, "rb") as f:
             self.accepted_templates = pickle.load(f)
         node_featurizer, edge_featurizer, self.graph_function = init_featurizer()

@@ -8,7 +8,6 @@ from collections import defaultdict
 from rdkit import Chem
 
 
-
 def mkdir_p(path):
     try:
         os.makedirs(path)

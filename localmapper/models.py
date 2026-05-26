@@ -4,7 +4,7 @@ from torch.nn.utils.rnn import pad_sequence
 import dgl
 from dgllife.model import MPNNGNN
 
-from .model_utils import MultiHeadAttention, CrossReactivityAttention
+from localmapper.model_utils import MultiHeadAttention, CrossReactivityAttention
 
 
 class LocalMapper(nn.Module):

@@ -1,26 +1,27 @@
-from argparse import ArgumentParser
-from tqdm import tqdm
-import sys
+from pathlib import Path
 
-sys.path.append("../")
+import fire
+from tqdm import tqdm
+
+ROOT = Path(__file__).resolve().parents[1]
 
 import torch
 
-from Sample import load_fixed_templates
-from utils import (
-    mkdir_p,
+from localmapper.cli_utils import (
     get_user_name,
     init_featurizer,
-    load_model,
     load_dataloader,
-    predict,
+    load_fixed_templates,
+    load_test_model,
 )
-from atom_mapper import prediction2map
+from localmapper.dataset import mkdir_p
+from localmapper.utils import predict
+from localmapper.atom_mapper import prediction2map
 
 
 def get_atom_map(args, model, data_loader):
     model.eval()
-    file_path = args["output_dir"] + "pred_%s.txt" % (args["iteration"])
+    file_path = str(Path(args["output_dir"]) / f"pred_{args['iteration']}.txt")
     accepted_templates, _ = load_fixed_templates(args)
     with open(file_path, "w") as f:
         f.write("Reaction_id\tMapped_reaction\tTemplate\n")
@@ -44,7 +45,22 @@ def get_atom_map(args, model, data_loader):
     return
 
 
-def main(args):
+def main(
+    gpu="cuda:0",
+    config="default_config.json",
+    batch_size=20,
+    iteration=1,
+    dataset="USPTO_50K",
+    try_twice=False,
+):
+    args = {
+        "gpu": gpu,
+        "config": config,
+        "batch_size": batch_size,
+        "iteration": iteration,
+        "dataset": dataset,
+        "try_twice": try_twice,
+    }
     args["mode"] = "test"
     args["chemist_name"] = get_user_name(args)
     args["device"] = (
@@ -55,40 +71,23 @@ def main(args):
         % (args["device"], args["chemist_name"])
     )
 
-    args["data_dir"] = "../data/%s/" % args["dataset"]
-    args["output_dir"] = "../outputs/%s/%s/" % (args["dataset"], args["chemist_name"])
-    args["model_path"] = "../models/%s/%s/LocalMapper_%d.pth" % (
-        args["dataset"],
-        args["chemist_name"],
-        args["iteration"],
+    args["data_dir"] = str(ROOT / "data" / args["dataset"])
+    args["output_dir"] = str(ROOT / "outputs" / args["dataset"] / args["chemist_name"])
+    args["model_path"] = str(
+        ROOT
+        / "models"
+        / args["dataset"]
+        / args["chemist_name"]
+        / f"LocalMapper_{args['iteration']}.pth"
     )
-    args["config_path"] = "../data/configs/%s" % args["config"]
+    args["config_path"] = str(ROOT / "data" / "configs" / args["config"])
     mkdir_p(args["output_dir"])
 
     args = init_featurizer(args)
     test_loader = load_dataloader(args, test=True)
-    model = load_model(args)
+    model = load_test_model(args)
     get_atom_map(args, model, test_loader)
 
 
 if __name__ == "__main__":
-    parser = ArgumentParser("LocalMapper testing arguements")
-    parser.add_argument("-g", "--gpu", default="cuda:0", help="GPU device to use")
-    parser.add_argument(
-        "-c", "--config", default="default_config.json", help="Configuration of model"
-    )
-    parser.add_argument(
-        "-b", "--batch-size", default=20, help="Batch size of dataloader"
-    )
-    parser.add_argument(
-        "-i", "--iteration", type=int, default=1, help="Iteration of active learning"
-    )
-    parser.add_argument(
-        "-d", "--dataset", default="USPTO_50K", help="Dataset to predict"
-    )
-    parser.add_argument(
-        "-tt", "--try-twice", type=bool, default=False, help="Try AAM twice"
-    )
-
-    args = parser.parse_args().__dict__
-    main(args)
+    fire.Fire(main)

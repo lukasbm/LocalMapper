@@ -1,16 +1,20 @@
-from argparse import ArgumentParser
+from pathlib import Path
+
+import fire
 
 import torch
 import torch.nn as nn
 
-from utils import (
-    mkdir_p,
+ROOT = Path(__file__).resolve().parents[1]
+
+from localmapper.cli_utils import (
     get_user_name,
     init_featurizer,
-    load_model,
     load_dataloader,
-    predict,
+    load_train_components,
 )
+from localmapper.dataset import mkdir_p
+from localmapper.utils import predict
 
 
 def run_a_train_epoch(args, epoch, model, data_loader, loss_criterion, optimizer):
@@ -78,7 +82,34 @@ def run_an_val_epoch(args, model, data_loader, loss_criterion):
     return val_loss / (batch_id + 1)
 
 
-def main(args):
+def main(
+    gpu="cuda:0",
+    dataset="USPTO_50K",
+    config="default_config.json",
+    batch_size=16,
+    num_epochs=100,
+    patience=5,
+    iteration=1,
+    max_clip=20,
+    learning_rate=1e-3,
+    weight_decay=1e-6,
+    schedule_step=10,
+    print_every=20,
+):
+    args = {
+        "gpu": gpu,
+        "dataset": dataset,
+        "config": config,
+        "batch_size": batch_size,
+        "num_epochs": num_epochs,
+        "patience": patience,
+        "iteration": iteration,
+        "max_clip": max_clip,
+        "learning_rate": learning_rate,
+        "weight_decay": weight_decay,
+        "schedule_step": schedule_step,
+        "print_every": print_every,
+    }
     args["mode"] = "train"
     args["chemist_name"] = get_user_name(args)
     args["device"] = (
@@ -90,15 +121,15 @@ def main(args):
     )
 
     model_name = "LocalMapper_%d.pth" % (args["iteration"])
-    args["data_dir"] = "../data/%s/" % args["dataset"]
-    args["model_dir"] = "../models/%s/%s/" % (args["dataset"], args["chemist_name"])
-    args["model_path"] = args["model_dir"] + model_name
+    args["data_dir"] = str(ROOT / "data" / args["dataset"])
+    args["model_dir"] = str(ROOT / "models" / args["dataset"] / args["chemist_name"])
+    args["model_path"] = str(Path(args["model_dir"]) / model_name)
     mkdir_p(args["model_dir"])
 
     args = init_featurizer(args)
-    args["config_path"] = "../data/configs/%s" % args["config"]
+    args["config_path"] = str(ROOT / "data" / "configs" / args["config"])
     train_loader, val_loader = load_dataloader(args)
-    model, loss_criterion, optimizer, scheduler, stopper = load_model(args)
+    model, loss_criterion, optimizer, scheduler, stopper = load_train_components(args)
     run_a_train_epoch(args, -1, model, train_loader, loss_criterion, optimizer)
     for epoch in range(args["num_epochs"]):
         run_a_train_epoch(args, epoch, model, train_loader, loss_criterion, optimizer)
@@ -115,62 +146,4 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = ArgumentParser("LocalMapper training arguements")
-    parser.add_argument("-g", "--gpu", default="cuda:0", help="GPU device to use")
-    parser.add_argument("-d", "--dataset", default="USPTO_50K", help="Dataset to use")
-    parser.add_argument(
-        "-c", "--config", default="default_config.json", help="Configuration of model"
-    )
-    parser.add_argument(
-        "-b", "--batch-size", default=16, help="Batch size of dataloader"
-    )
-    parser.add_argument(
-        "-n",
-        "--num-epochs",
-        type=int,
-        default=100,
-        help="Maximum number of epochs for training",
-    )
-    parser.add_argument(
-        "-p", "--patience", type=int, default=5, help="Patience for early stopping"
-    )
-    parser.add_argument(
-        "-i", "--iteration", type=int, default=1, help="Iteration of active learning"
-    )
-    parser.add_argument(
-        "-cl",
-        "--max-clip",
-        type=int,
-        default=20,
-        help="Maximum number of gradient clip",
-    )
-    parser.add_argument(
-        "-lr",
-        "--learning-rate",
-        type=float,
-        default=1e-3,
-        help="Learning rate of optimizer",
-    )
-    parser.add_argument(
-        "-l2",
-        "--weight-decay",
-        type=float,
-        default=1e-6,
-        help="Weight decay of optimizer",
-    )
-    parser.add_argument(
-        "-ss",
-        "--schedule_step",
-        type=int,
-        default=10,
-        help="Step size of learning scheduler",
-    )
-    parser.add_argument(
-        "-pe",
-        "--print-every",
-        type=int,
-        default=20,
-        help="Print the training progress every X mini-batches",
-    )
-    args = parser.parse_args().__dict__
-    main(args)
+    fire.Fire(main)
