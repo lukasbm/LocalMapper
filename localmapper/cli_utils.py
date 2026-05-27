@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from pathlib import Path
-import glob
-
-import pandas as pd
 import torch
 from torch import nn
 from torch.optim import Adam, lr_scheduler
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 
-from .dataset import ReactionDataset
+from .dataset import (
+    ReactionDataset,
+    collate_reaction_batch,
+    load_reactions,
+)
 from .models import LocalMapper
 from .utils import get_configure, init_featurizer as _init_featurizer
 
@@ -39,61 +39,79 @@ def init_featurizer():
     return _init_featurizer()
 
 
-def _collate_batch(batch):
-    idxs, rxns, rgraphs, pgraphs, labels, weights = zip(*batch)
-    labels_list = [
-        torch.as_tensor(label, dtype=torch.long)
-        if not torch.is_tensor(label)
-        else label
-        for label in labels
-    ]
-    masks_list = [torch.ones_like(label, dtype=torch.long) for label in labels_list]
-    weight_list = [float(weight) for weight in weights]
-    return (
-        list(idxs),
-        list(rxns),
-        list(rgraphs),
-        list(pgraphs),
-        labels_list,
-        masks_list,
-        weight_list,
-    )
-
-
 def load_dataloader(
-    data_dir,
-    mode,
+    dataset_name,
+    split,
     mol_to_graph,
     batch_size=16,
-    iteration=1,
-    sample_dir=None,
+    data_root="data",
+    val_fraction=0.1,
+    test_fraction=0.1,
+    seed=0,
+    include_labels=True,
 ):
-    dataset = ReactionDataset(
-        data_dir=data_dir,
-        mode=mode,
+    dataset = ReactionDataset.from_name(
+        dataset=dataset_name,
         mol_to_graph=mol_to_graph,
-        iteration=iteration,
-        sample_dir=sample_dir,
+        split=split,
+        data_root=data_root,
+        include_labels=include_labels,
+        val_fraction=val_fraction,
+        test_fraction=test_fraction,
+        seed=seed,
+    )
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=split == "train",
+        collate_fn=collate_reaction_batch,
     )
 
-    if mode == "test":
-        return DataLoader(
-            dataset, batch_size=batch_size, shuffle=False, collate_fn=_collate_batch
-        )
 
-    train_subset = Subset(dataset, dataset.train_idx)
-    val_subset = Subset(dataset, dataset.val_idx)
+def load_train_val_dataloaders(
+    dataset_name,
+    mol_to_graph,
+    batch_size=16,
+    data_root="data",
+    val_fraction=0.1,
+    test_fraction=0.1,
+    seed=0,
+):
+    train_dataset = ReactionDataset(
+        load_reactions(
+            dataset_name,
+            "train",
+            data_root=data_root,
+            seed=seed,
+            val_fraction=val_fraction,
+            test_fraction=test_fraction,
+        ),
+        mol_to_graph,
+        include_labels=True,
+    )
+    val_dataset = ReactionDataset(
+        load_reactions(
+            dataset_name,
+            "val",
+            data_root=data_root,
+            seed=seed,
+            val_fraction=val_fraction,
+            test_fraction=test_fraction,
+        ),
+        mol_to_graph,
+        include_labels=True,
+    )
     train_loader = DataLoader(
-        train_subset,
+        train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        collate_fn=_collate_batch,
+        collate_fn=collate_reaction_batch,
     )
     val_loader = DataLoader(
-        val_subset,
+        val_dataset,
         batch_size=batch_size,
         shuffle=False,
-        collate_fn=_collate_batch,
+        collate_fn=collate_reaction_batch,
     )
     return train_loader, val_loader
 
@@ -142,39 +160,13 @@ def load_test_model(config_path, node_featurizer, edge_featurizer, device, model
     return model
 
 
-def load_templates(sample_dir, iteration, files, load_prev=False):
-    loaded_templates = set()
-    for file in files:
-        file_iteration = int(Path(file).stem.split("_")[-1])
-        if file_iteration > iteration or (load_prev and file_iteration == iteration):
-            continue
-        df = pd.read_csv(file)
-        loaded_templates.update(df.template.tolist())
-    return loaded_templates
+def load_dataset_templates(dataset_name, data_root="data", split="train"):
+    from .LocalTemplate.template_extractor import extract_from_reaction
 
-
-def load_fixed_templates(sample_dir, iteration, load_prev=False):
-    sample_dir = Path(sample_dir)
-    pred_templates = load_templates(
-        sample_dir,
-        iteration,
-        glob.glob(str(sample_dir / "pred_train_*.csv")),
-        load_prev,
-    )
-    conf_templates = load_templates(
-        sample_dir,
-        iteration,
-        glob.glob(str(sample_dir / "conf_pred_*.csv")),
-        load_prev,
-    )
-    accepted_templates = load_templates(
-        sample_dir,
-        iteration,
-        glob.glob(str(sample_dir / "fixed_train_*.csv")),
-        load_prev,
-    )
-    accepted_templates = accepted_templates.union(conf_templates)
-    rejected_templates = {
-        template for template in pred_templates if template not in accepted_templates
-    }
-    return accepted_templates, rejected_templates
+    templates = set()
+    for item in load_reactions(dataset_name, split, data_root=data_root):
+        try:
+            templates.add(extract_from_reaction(item["rxn"]))
+        except Exception:
+            pass
+    return templates

@@ -8,9 +8,8 @@ import torch.nn as nn
 ROOT = Path(__file__).resolve().parents[1]
 
 from localmapper.cli_utils import (
-    get_user_name,
     init_featurizer,
-    load_dataloader,
+    load_train_val_dataloaders,
     load_train_components,
 )
 from localmapper.dataset import mkdir_p
@@ -34,7 +33,9 @@ def run_a_train_epoch(
     model.train()
     train_loss = 0
     for batch_id, batch_data in enumerate(data_loader):
-        idxs, rxns, rbg, pbg, labels_list, masks_list, weight_list = batch_data
+        idxs, rxns, rbg, pbg, labels_list, masks_list, weight_list, records = (
+            batch_data
+        )
         labels_list, masks_list = (
             [labels.to(device) for labels in labels_list],
             [masks.to(device) for masks in masks_list],
@@ -72,7 +73,9 @@ def run_an_val_epoch(model, data_loader, loss_criterion, device):
     val_loss = 0
     with torch.no_grad():
         for batch_id, batch_data in enumerate(data_loader):
-            idxs, rxns, rbg, pbg, labels_list, masks_list, weight_list = batch_data
+            idxs, rxns, rbg, pbg, labels_list, masks_list, weight_list, records = (
+                batch_data
+            )
             labels_list, masks_list = (
                 [labels.to(device) for labels in labels_list],
                 [masks.to(device) for masks in masks_list],
@@ -100,32 +103,33 @@ def main(
     batch_size=16,
     num_epochs=100,
     patience=5,
-    iteration=1,
     max_clip=20,
     learning_rate=1e-3,
     weight_decay=1e-6,
     schedule_step=10,
     print_every=20,
+    seed=0,
+    val_fraction=0.1,
+    test_fraction=0.1,
 ):
-    chemist_name = get_user_name()
     device = torch.device(gpu) if torch.cuda.is_available() else torch.device("cpu")
-    print("Training with device %s, chemist name: %s" % (device, chemist_name))
+    print("Training with device %s, dataset: %s" % (device, dataset))
 
-    data_dir = str(ROOT / "data" / dataset)
-    sample_dir = Path(data_dir) / chemist_name
-    model_dir = str(ROOT / "models" / dataset / chemist_name)
-    model_path = str(Path(model_dir) / f"LocalMapper_{iteration}.pth")
+    data_root = str(ROOT / "data")
+    model_dir = str(ROOT / "models" / dataset)
+    model_path = str(Path(model_dir) / "LocalMapper.pth")
     config_path = str(ROOT / "data" / "configs" / config)
     mkdir_p(model_dir)
 
     node_featurizer, edge_featurizer, mol_to_graph = init_featurizer()
-    train_loader, val_loader = load_dataloader(
-        data_dir,
-        "train",
+    train_loader, val_loader = load_train_val_dataloaders(
+        dataset,
         mol_to_graph,
         batch_size=batch_size,
-        iteration=iteration,
-        sample_dir=sample_dir,
+        data_root=data_root,
+        val_fraction=val_fraction,
+        test_fraction=test_fraction,
+        seed=seed,
     )
     model, loss_criterion, optimizer, scheduler, stopper = load_train_components(
         config_path,
