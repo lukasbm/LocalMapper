@@ -16,7 +16,7 @@ def mkdir_p(path):
         os.makedirs(path)
     except OSError as exc:
         if exc.errno == errno.EEXIST and os.path.isdir(path):
-            pass
+            return
         raise
 
 
@@ -150,55 +150,132 @@ def _from_semicolon_file(path: Path, *, split: str) -> list[dict[str, Any]]:
     return items
 
 
-def load_dataset_items(
-    dataset: str,
-    *,
-    data_root: str | Path = "data",
-) -> list[dict[str, Any]]:
-    data_root = Path(data_root)
-    key = dataset.lower().replace("-", "_")
+class ReactionDataset(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        mol_to_graph,
+        *,
+        data_root: str | Path = "data",
+        items: list[dict[str, Any]] | None = None,
+        include_labels: bool = True,
+    ):
+        self.mol_to_graph = mol_to_graph
+        self.include_labels = include_labels
+        self.data_root = Path(data_root)
+        self.items = self.load_items() if items is None else items
 
-    if key in {"uspto_50k", "uspto50k"}:
-        df = pd.read_csv(data_root / "USPTO_50K" / "raw_data.csv")
+    def load_items(self) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    @classmethod
+    def from_items(
+        cls,
+        items: list[dict[str, Any]],
+        mol_to_graph,
+        *,
+        include_labels: bool = True,
+    ) -> "ReactionDataset":
+        return cls(mol_to_graph, items=items, include_labels=include_labels)
+
+    def __getitem__(self, item):
+        data = self.items[item]
+        rxn = data["rxn"]
+        r, p = rxn.split(">>")
+        rgraph = self.mol_to_graph(Chem.MolFromSmiles(r))
+        pgraph = self.mol_to_graph(Chem.MolFromSmiles(p))
+        label = get_mapping_label(rxn) if self.include_labels else []
+        return data["id"], rxn, rgraph, pgraph, label, 1.0, data
+
+    def __len__(self):
+        return len(self.items)
+
+
+class USPTO50KDataset(ReactionDataset):
+    def load_items(self) -> list[dict[str, Any]]:
+        df = pd.read_csv(self.data_root / "USPTO_50K" / "raw_data.csv")
         return _from_frame(df, "mapped_rxn")
 
-    if key == "golden":
-        df = pd.read_csv(data_root / "Golden" / "raw_data.csv")
+
+class GoldenDataset(ReactionDataset):
+    def load_items(self) -> list[dict[str, Any]]:
+        df = pd.read_csv(self.data_root / "Golden" / "raw_data.csv")
         return _from_frame(df, "mapped_rxn")
 
-    if key in {"natcomm", "jaworski"}:
-        df = pd.read_csv(data_root / "NatComm" / "test_data.csv")
+
+class NatCommDataset(ReactionDataset):
+    def load_items(self) -> list[dict[str, Any]]:
+        df = pd.read_csv(self.data_root / "NatComm" / "test_data.csv")
         return _from_frame(df, "mapped_rxn", split="test", source_col="source")
 
-    if key in {"schneider", "schneider50k"}:
-        df = pd.read_csv(data_root / "schneider" / "schneider50k.tsv", sep="\t")
+
+class SchneiderDataset(ReactionDataset):
+    def load_items(self) -> list[dict[str, Any]]:
+        df = pd.read_csv(self.data_root / "schneider" / "schneider50k.tsv", sep="\t")
         return _from_frame(df, "clean_rxn", id_col="Unnamed: 0", source_col="source")
 
-    if key in {"ringreactions", "ring_reactions"}:
+
+class RingReactionsDataset(ReactionDataset):
+    def load_items(self) -> list[dict[str, Any]]:
         return (
             _from_line_file(
-                data_root / "ringreactions" / "train_ringreactions.csv",
+                self.data_root / "ringreactions" / "train_ringreactions.csv",
                 split="train",
             )
             + _from_line_file(
-                data_root / "ringreactions" / "test_ringreactions.csv",
+                self.data_root / "ringreactions" / "test_ringreactions.csv",
                 split="test",
             )
         )
 
-    if key in {"metamdb", "metamdb_filtered"}:
+
+class MetAMDBDataset(ReactionDataset):
+    def load_items(self) -> list[dict[str, Any]]:
         return (
             _from_semicolon_file(
-                data_root / "metAMDB" / "train_metamdb_filtered.csv",
+                self.data_root / "metAMDB" / "train_metamdb_filtered.csv",
                 split="train",
             )
             + _from_semicolon_file(
-                data_root / "metAMDB" / "test_metamdb_filtered.csv",
+                self.data_root / "metAMDB" / "test_metamdb_filtered.csv",
                 split="test",
             )
         )
 
-    raise ValueError(f"Unknown dataset: {dataset}")
+
+DATASETS = {
+    "uspto_50k": USPTO50KDataset,
+    "uspto50k": USPTO50KDataset,
+    "golden": GoldenDataset,
+    "natcomm": NatCommDataset,
+    "jaworski": NatCommDataset,
+    "schneider": SchneiderDataset,
+    "schneider50k": SchneiderDataset,
+    "ringreactions": RingReactionsDataset,
+    "ring_reactions": RingReactionsDataset,
+    "metamdb": MetAMDBDataset,
+    "metamdb_filtered": MetAMDBDataset,
+}
+
+
+def _dataset_key(dataset: str) -> str:
+    return dataset.lower().replace("-", "_")
+
+
+def create_reaction_dataset(
+    dataset: str,
+    mol_to_graph,
+    *,
+    data_root: str | Path = "data",
+    include_labels: bool = True,
+) -> ReactionDataset:
+    dataset_cls = DATASETS.get(_dataset_key(dataset))
+    if dataset_cls is None:
+        raise ValueError(f"Unknown dataset: {dataset}")
+    return dataset_cls(
+        mol_to_graph,
+        data_root=data_root,
+        include_labels=include_labels,
+    )
 
 
 def select_split(
@@ -233,6 +310,15 @@ def select_split(
     return selected
 
 
+def load_dataset_items(
+    dataset: str,
+    *,
+    data_root: str | Path = "data",
+) -> list[dict[str, Any]]:
+    # For code that only needs the reaction list, not graph construction.
+    return create_reaction_dataset(dataset, lambda mol: mol, data_root=data_root).items
+
+
 def load_reactions(
     dataset: str,
     split: str,
@@ -249,57 +335,6 @@ def load_reactions(
         val_fraction=val_fraction,
         test_fraction=test_fraction,
     )
-
-
-class ReactionDataset(torch.utils.data.Dataset):
-    def __init__(
-        self,
-        items: list[dict[str, Any]],
-        mol_to_graph,
-        *,
-        include_labels: bool = True,
-    ):
-        self.items = items
-        self.mol_to_graph = mol_to_graph
-        self.include_labels = include_labels
-
-    @classmethod
-    def from_name(
-        cls,
-        dataset: str,
-        mol_to_graph,
-        *,
-        split: str = "train",
-        data_root: str | Path = "data",
-        include_labels: bool = True,
-        seed: int = 0,
-        val_fraction: float = 0.1,
-        test_fraction: float = 0.1,
-    ) -> "ReactionDataset":
-        return cls(
-            load_reactions(
-                dataset,
-                split,
-                data_root=data_root,
-                seed=seed,
-                val_fraction=val_fraction,
-                test_fraction=test_fraction,
-            ),
-            mol_to_graph,
-            include_labels=include_labels,
-        )
-
-    def __getitem__(self, item):
-        data = self.items[item]
-        rxn = data["rxn"]
-        r, p = rxn.split(">>")
-        rgraph = self.mol_to_graph(Chem.MolFromSmiles(r))
-        pgraph = self.mol_to_graph(Chem.MolFromSmiles(p))
-        label = get_mapping_label(rxn) if self.include_labels else []
-        return data["id"], rxn, rgraph, pgraph, label, 1.0, data
-
-    def __len__(self):
-        return len(self.items)
 
 
 def collate_reaction_batch(batch):

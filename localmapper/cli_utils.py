@@ -8,7 +8,9 @@ from torch.utils.data import DataLoader
 from .dataset import (
     ReactionDataset,
     collate_reaction_batch,
+    create_reaction_dataset,
     load_reactions,
+    select_split,
 )
 from .models import LocalMapper
 from .utils import get_configure, init_featurizer as _init_featurizer
@@ -50,15 +52,22 @@ def load_dataloader(
     seed=0,
     include_labels=True,
 ):
-    dataset = ReactionDataset.from_name(
+    full_dataset = create_reaction_dataset(
         dataset=dataset_name,
         mol_to_graph=mol_to_graph,
-        split=split,
         data_root=data_root,
         include_labels=include_labels,
-        val_fraction=val_fraction,
-        test_fraction=test_fraction,
-        seed=seed,
+    )
+    dataset = ReactionDataset.from_items(
+        select_split(
+            full_dataset.items,
+            split,
+            seed=seed,
+            val_fraction=val_fraction,
+            test_fraction=test_fraction,
+        ),
+        mol_to_graph,
+        include_labels=include_labels,
     )
     return DataLoader(
         dataset,
@@ -77,11 +86,16 @@ def load_train_val_dataloaders(
     test_fraction=0.1,
     seed=0,
 ):
-    train_dataset = ReactionDataset(
-        load_reactions(
-            dataset_name,
+    full_dataset = create_reaction_dataset(
+        dataset_name,
+        mol_to_graph,
+        data_root=data_root,
+        include_labels=True,
+    )
+    train_dataset = ReactionDataset.from_items(
+        select_split(
+            full_dataset.items,
             "train",
-            data_root=data_root,
             seed=seed,
             val_fraction=val_fraction,
             test_fraction=test_fraction,
@@ -89,11 +103,10 @@ def load_train_val_dataloaders(
         mol_to_graph,
         include_labels=True,
     )
-    val_dataset = ReactionDataset(
-        load_reactions(
-            dataset_name,
+    val_dataset = ReactionDataset.from_items(
+        select_split(
+            full_dataset.items,
             "val",
-            data_root=data_root,
             seed=seed,
             val_fraction=val_fraction,
             test_fraction=test_fraction,
