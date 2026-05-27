@@ -224,3 +224,35 @@ For sampled rows:
 - `ReactionDataset` is driven by file naming conventions. Renaming the CSVs will break loading.
 - Some older files in the repo still reflect earlier layouts, but the active path for the CLIs is now the package-based code in `localmapper/`.
 
+
+## Dataset Stuff
+
+1. Dataset formats differ substantially:
+
+- USPTO_50K/raw_data.csv: mapped_rxn only, 49,996 rows.
+- USPTO_50K/pretrained/fixed_train_1..5.csv: data_idx, mapped_rxn, template; this is the 5-iteration chemist-fixed training set.
+- USPTO_FULL/pretrained/fixed_train_0..2.csv: same fixed format, but starts at 0 and has 3 files.
+- Golden/raw_data.csv: mapped_rxn only, 1,851 rows.
+- Golden/test_data.csv: original_id, mapped_rxn, filtered to 1,758 rows.
+- NatComm/original_data/*.csv: reaction, mapped_reaction, split by source: patent, typical, complex.
+- NatComm/test_data.csv: mapped_rxn, source, plus stray unnamed columns.
+- comparison/*.csv: evaluation artifacts, not clean training datasets.
+
+2. Paper/README training and evaluation:
+
+- Pretrained first on USPTO_50K using 5 active-learning iterations of 200 sampled reactions each.
+- Further trained/adapted on USPTO_FULL for 2 additional iterations of 500 sampled reactions each.
+- Evaluated on filtered USPTO_50K, the full filtered Golden dataset, and the extracted Jaworski/NatComm-style subsets: USPTO, typical, complex.
+- README says USPTO raw reactions come from RXNMapper sources and mapped USPTO outputs are Figshare artifacts.
+
+3. Current code issue:
+
+- scripts/Sample.py:24 expects raw_data.csv to contain template.
+- Actual raw_data.csv files only contain mapped_rxn.
+- So the sampler is incompatible with the checked-in data unless templates are generated from mapped_rxn before sampling or a separate normalized file is created.
+
+4. Meaning of “fixed”:
+
+- “fixed” means human-reviewed/manual-corrected active-learning samples.
+- fixed_train_*.csv is not a fixed train split. It is accepted/corrected AAM supervision.
+- The current name is misleading and should probably become something like annotations/iteration_*.csv or labels/manual_*.csv.
