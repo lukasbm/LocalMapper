@@ -137,7 +137,7 @@ def main(
     pseudo_items = confident_pseudo_items(
         ROOT,
         dataset,
-        mapper_model,
+        model,
         seed,
         iteration,
         split,
@@ -165,7 +165,9 @@ def main(
         previous_checkpoint = checkpoint_path(
             ROOT, dataset, model, seed, iteration - 1
         )
-        if checkpoint_path_to_load is None and iteration > 1 and previous_checkpoint.exists():
+        if checkpoint_path_to_load is not None:
+            init_mode = "checkpoint"
+        elif iteration > 1 and previous_checkpoint.exists():
             checkpoint_path_to_load = str(previous_checkpoint)
             init_mode = "checkpoint"
         else:

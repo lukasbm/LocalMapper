@@ -143,6 +143,15 @@ Iteration 2 samples uncertain predicted templates first, then uses dataset groun
 python -m scripts.Sample --dataset=USPTO_50K --model=LocalMapper --seed=0 --iteration=2
 ```
 
+### Experiment scripts
+Preconfigured active-learning loops are available in `scripts/experiments/`:
+```
+scripts/experiments/metamdb_scratch_200x5.sh
+scripts/experiments/metamdb_pretrained_200x5.sh
+scripts/experiments/ringreactions_pretrained_10x10.sh
+```
+Each script runs `Sample -> Train -> Test` for every iteration. Outputs are grouped by dataset, model name, and seed under `outputs/` and `models/`.
+
 ## Publication
 ```bibtex
 @article{chen2024precise,

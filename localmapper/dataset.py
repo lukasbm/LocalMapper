@@ -40,7 +40,13 @@ def get_mapping_label(rxn):
     rmol = Chem.MolFromSmiles(rsmi)
     pmol = Chem.MolFromSmiles(psmi)
     r_atom_dict = {atom.GetAtomMapNum(): atom.GetIdx() for atom in rmol.GetAtoms()}
-    return [r_atom_dict[atom.GetAtomMapNum()] for atom in pmol.GetAtoms()]
+    labels = []
+    for atom in pmol.GetAtoms():
+        map_num = atom.GetAtomMapNum()
+        if map_num not in r_atom_dict:
+            return None
+        labels.append(r_atom_dict[map_num])
+    return labels
 
 
 def clean_reactant_map(rxn):
@@ -184,6 +190,8 @@ class ReactionDataset(torch.utils.data.Dataset):
         rgraph = self.mol_to_graph(Chem.MolFromSmiles(r))
         pgraph = self.mol_to_graph(Chem.MolFromSmiles(p))
         label = get_mapping_label(rxn) if self.include_labels else []
+        if self.include_labels and label is None:
+            raise ValueError(f"Invalid mapped reaction for training item: {data['id']}")
         return data["id"], rxn, rgraph, pgraph, label, data.get("weight", 1.0), data
 
     def __len__(self):
@@ -271,11 +279,15 @@ def create_reaction_dataset(
     dataset_cls = DATASETS.get(_dataset_key(dataset))
     if dataset_cls is None:
         raise ValueError(f"Unknown dataset: {dataset}")
-    return dataset_cls(
+    dataset_obj = dataset_cls(
         mol_to_graph,
         data_root=data_root,
         include_labels=include_labels,
     )
+    dataset_obj.items = [
+        item for item in dataset_obj.items if get_mapping_label(item["rxn"]) is not None
+    ]
+    return dataset_obj
 
 
 def select_split(
@@ -316,7 +328,8 @@ def load_dataset_items(
     data_root: str | Path = "data",
 ) -> list[dict[str, Any]]:
     # For code that only needs the reaction list, not graph construction.
-    return create_reaction_dataset(dataset, lambda mol: mol, data_root=data_root).items
+    items = create_reaction_dataset(dataset, lambda mol: mol, data_root=data_root).items
+    return [item for item in items if get_mapping_label(item["rxn"]) is not None]
 
 
 def load_reactions(
@@ -338,6 +351,7 @@ def load_reactions(
 
 
 def collate_reaction_batch(batch):
+    batch = [row for row in batch if row is not None]
     idxs, rxns, rgraphs, pgraphs, labels, weights, data = zip(*batch)
     labels_list = [torch.as_tensor(label, dtype=torch.long) for label in labels]
     masks_list = [torch.ones_like(label, dtype=torch.long) for label in labels_list]
