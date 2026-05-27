@@ -13,7 +13,6 @@ from localmapper.cli_utils import (
     load_train_components,
 )
 from localmapper.dataset import mkdir_p
-from localmapper.utils import predict
 
 
 def run_a_train_epoch(
@@ -40,7 +39,7 @@ def run_a_train_epoch(
             [labels.to(device) for labels in labels_list],
             [masks.to(device) for masks in masks_list],
         )
-        logits_list = predict(model, device, rbg, pbg)
+        logits_list = model.score_graphs(rbg, pbg)
         loss = 0
         total_weights = 0
         for logits, labels, masks, weight in zip(
@@ -80,7 +79,7 @@ def run_an_val_epoch(model, data_loader, loss_criterion, device):
                 [labels.to(device) for labels in labels_list],
                 [masks.to(device) for masks in masks_list],
             )
-            logits_list = predict(model, device, rbg, pbg)
+            logits_list = model.score_graphs(rbg, pbg)
             loss = 0
             total_weights = 0
             for logits, labels, masks, weight in zip(
@@ -99,7 +98,6 @@ def run_an_val_epoch(model, data_loader, loss_criterion, device):
 def main(
     gpu="cuda:0",
     dataset="USPTO_50K",
-    config="default_config.json",
     batch_size=16,
     num_epochs=100,
     patience=5,
@@ -111,6 +109,8 @@ def main(
     seed=0,
     val_fraction=0.1,
     test_fraction=0.1,
+    init="scratch",
+    checkpoint=None,
 ):
     device = torch.device(gpu) if torch.cuda.is_available() else torch.device("cpu")
     print("Training with device %s, dataset: %s" % (device, dataset))
@@ -118,7 +118,6 @@ def main(
     data_root = str(ROOT / "data")
     model_dir = str(ROOT / "models" / dataset)
     model_path = str(Path(model_dir) / "LocalMapper.pth")
-    config_path = str(ROOT / "data" / "configs" / config)
     mkdir_p(model_dir)
 
     node_featurizer, edge_featurizer, mol_to_graph = init_featurizer()
@@ -132,14 +131,16 @@ def main(
         seed=seed,
     )
     model, loss_criterion, optimizer, scheduler, stopper = load_train_components(
-        config_path,
         node_featurizer,
         edge_featurizer,
+        mol_to_graph,
         device,
         learning_rate,
         weight_decay,
         patience,
         model_path,
+        init=init,
+        checkpoint_path=checkpoint,
     )
     run_a_train_epoch(
         -1,

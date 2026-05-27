@@ -13,7 +13,7 @@ from .dataset import (
     select_split,
 )
 from .models import LocalMapper
-from .utils import get_configure, init_featurizer as _init_featurizer
+from .utils import init_featurizer as _init_featurizer
 
 
 class EarlyStopping:
@@ -129,30 +129,34 @@ def load_train_val_dataloaders(
     return train_loader, val_loader
 
 
-def _build_model(config_path, node_featurizer, edge_featurizer, device):
-    exp_config = get_configure(config_path, node_featurizer, edge_featurizer)
+def _build_model(node_featurizer, edge_featurizer, mol_to_graph, device):
     return LocalMapper(
-        node_in_feats=exp_config["in_node_feats"],
-        edge_in_feats=exp_config["in_edge_feats"],
-        node_out_feats=exp_config["node_out_feats"],
-        edge_hidden_feats=exp_config["edge_hidden_feats"],
-        num_step_message_passing=exp_config["num_step_message_passing"],
-        attention_heads=exp_config["attention_heads"],
-        attention_layers=exp_config["attention_layers"],
-    ).to(device)
+        node_in_feats=node_featurizer.feat_size(),
+        edge_in_feats=edge_featurizer.feat_size(),
+        graph_function=mol_to_graph,
+        device=device,
+    )
 
 
 def load_train_components(
-    config_path,
     node_featurizer,
     edge_featurizer,
+    mol_to_graph,
     device,
     learning_rate,
     weight_decay,
     patience,
     model_path,
+    init="scratch",
+    checkpoint_path=None,
 ):
-    model = _build_model(config_path, node_featurizer, edge_featurizer, device)
+    model = _build_model(node_featurizer, edge_featurizer, mol_to_graph, device)
+    if init == "checkpoint":
+        if checkpoint_path is None:
+            raise ValueError("checkpoint_path is required when init='checkpoint'")
+        model.load_checkpoint(checkpoint_path, device=device)
+    elif init != "scratch":
+        raise ValueError("init must be 'scratch' or 'checkpoint'")
     loss_criterion = nn.CrossEntropyLoss()
     optimizer = Adam(
         model.parameters(),
@@ -166,10 +170,9 @@ def load_train_components(
     return model, loss_criterion, optimizer, scheduler, stopper
 
 
-def load_test_model(config_path, node_featurizer, edge_featurizer, device, model_path):
-    model = _build_model(config_path, node_featurizer, edge_featurizer, device)
-    checkpoint = torch.load(model_path, map_location=device)
-    model.load_state_dict(checkpoint["model_state_dict"])
+def load_test_model(node_featurizer, edge_featurizer, mol_to_graph, device, model_path):
+    model = _build_model(node_featurizer, edge_featurizer, mol_to_graph, device)
+    model.load_checkpoint(model_path, device=device)
     return model
 
 

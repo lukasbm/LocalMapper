@@ -59,10 +59,12 @@ pip install -e .
 ## Usage
 ### Single rxn input
 ```
-from localmapper import localmapper
-mapper = localmapper()
+import pickle
+from localmapper import LocalMapper
+
+mapper = LocalMapper.from_checkpoint("data/checkpoints/LocalMapper_202403.pth")
 rxn = 'CC(C)S.CN(C)C=O.Fc1cccnc1F.O=C([O-])[O-].[K+].[K+]>>CC(C)Sc1ncccc1F'
-result = mapper.get_atom_map(rxn)
+result = mapper.map_rxns(rxn)
 ```
 The expected output of `result` should be
 ```
@@ -72,7 +74,7 @@ The expected output of `result` should be
 ### Multiple rxns input
 ```
 rxns = ['CC(C)S.CN(C)C=O.Fc1cccnc1F.O=C([O-])[O-].[K+].[K+]>>CC(C)Sc1ncccc1F', CCOCC.C[Mg+].O=Cc1ccc(F)cc1Cl.[Br-]>>CC(O)c1ccc(F)cc1Cl']
-results = mapper.get_atom_map(rxns)
+results = mapper.map_rxns(rxns)
 ```
 The expected output of `results` should be
 ```
@@ -83,7 +85,9 @@ The expected output of `results` should be
 ### Return results as dictionary
 ```
 rxns = ['CC(C)S.CN(C)C=O.Fc1cccnc1F.O=C([O-])[O-].[K+].[K+]>>CC(C)Sc1ncccc1F', CCOCC.C[Mg+].O=Cc1ccc(F)cc1Cl.[Br-]>>CC(O)c1ccc(F)cc1Cl']
-results = mapper.get_atom_map(rxns, return_dict=True)
+with open("data/checkpoints/templates_202403.pkl", "rb") as f:
+    accepted_templates = pickle.load(f)
+results = mapper.map_rxns(rxns, accepted_templates=accepted_templates, return_dict=True)
 ```
 The expected output of `results` should be
 ```
@@ -126,7 +130,12 @@ Back to `LocalMapper/manual/` folder and use `Check_atom_mapping.ipynb` to corre
 ### [3] Train LocalMapper model
 From the repository root, run the training code
 ```
-python -m scripts.Train --iteration=1
+python -m scripts.Train --dataset=USPTO_50K
+```
+
+Training starts from random weights by default. To fine-tune an existing checkpoint, use:
+```
+python -m scripts.Train --dataset=USPTO_50K --init=checkpoint --checkpoint=models/USPTO_50K/LocalMapper.pth
 ```
 
 This training process usually takes 3~6 hours to complete using cuda-supporting GPU depending on the number of training reactions.
@@ -134,7 +143,7 @@ This training process usually takes 3~6 hours to complete using cuda-supporting 
 ### [4] Predict the atom-mapping for raw data
 To use the model to predict the atom-mapping on raw reactions, simply run
 ```
-python -m scripts.Test --iteration=1
+python -m scripts.Test --dataset=USPTO_50K --split=test
 ```
 
 ### [5] Repeat step [1]~[4]

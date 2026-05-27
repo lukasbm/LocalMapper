@@ -110,16 +110,14 @@ Relevant code:
 
 ## Package Modules
 
-### `localmapper/localmapper.py`
+### `localmapper/models.py`
 
-High-level user-facing API.
+User-facing model API and neural network definition.
 
-- Loads the pretrained model and accepted templates from `data/`
-- Provides `localmapper.get_atom_map(...)`
-- Returns mapped reactions or structured dictionaries
-
-Relevant code:
-- [localmapper/localmapper.py](/homes/biertank/lukas/Documents/repos/LocalMapper/localmapper/localmapper.py#L12)
+- Creates scratch models with constructor defaults.
+- Loads checkpoints with `LocalMapper.from_checkpoint(...)`.
+- Scores reactions for training or inference.
+- Maps raw reaction strings with `LocalMapper.map_rxns(...)`.
 
 ### `localmapper/models.py`
 
@@ -190,7 +188,6 @@ The code expects these repository-local files and directories:
 - `data/<dataset>/<chemist_name>/fixed_train_<n>.csv`
 - `data/<dataset>/<chemist_name>/pred_train_<n>.csv`
 - `data/<dataset>/<chemist_name>/conf_pred_<n>.csv`
-- `data/configs/<config>.json`
 - `manual/*.user` for the current chemist name
 
 The raw and intermediate CSV files are expected to contain at least:

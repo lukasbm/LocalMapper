@@ -14,8 +14,6 @@ from localmapper.cli_utils import (
     load_test_model,
 )
 from localmapper.dataset import mkdir_p
-from localmapper.utils import predict
-from localmapper.atom_mapper import prediction2map
 
 
 def get_atom_map(
@@ -36,15 +34,13 @@ def get_atom_map(
                 data_loader, total=len(data_loader), desc="Predicting AAM..."
             ):
                 idxs, rxns, rbg, pbg, _, _, _, items = batch_data
-                logits_list = predict(model, device, rbg, pbg)
-                for rxn, logits, item in zip(rxns, logits_list, items):
-                    prediction = torch.softmax(logits, dim=1).cpu().numpy()
-                    result = prediction2map(rxn, prediction)
-                    if (
-                        try_twice
-                        and result["template"] not in accepted_templates
-                    ):
-                        result = prediction2map(rxn, prediction, neighbor_weight=90)
+                results = model.map_rxns(
+                    rxns,
+                    accepted_templates=accepted_templates,
+                    try_twice=try_twice,
+                    return_dict=True,
+                )
+                for result, item in zip(results, items):
                     f.write(
                         f"{item['id']}\t{result['mapped_rxn']}\t{result['template']}\n"
                     )
@@ -53,7 +49,6 @@ def get_atom_map(
 
 def main(
     gpu="cuda:0",
-    config="default_config.json",
     batch_size=20,
     dataset="USPTO_50K",
     split="test",
@@ -71,7 +66,6 @@ def main(
     data_root = str(ROOT / "data")
     output_dir = str(ROOT / "outputs" / dataset)
     model_path = str(ROOT / "models" / dataset / "LocalMapper.pth")
-    config_path = str(ROOT / "data" / "configs" / config)
     mkdir_p(output_dir)
 
     node_featurizer, edge_featurizer, mol_to_graph = init_featurizer()
@@ -87,7 +81,7 @@ def main(
         include_labels=False,
     )
     model = load_test_model(
-        config_path, node_featurizer, edge_featurizer, device, model_path
+        node_featurizer, edge_featurizer, mol_to_graph, device, model_path
     )
     accepted_templates = (
         load_dataset_templates(dataset, data_root=data_root, split="train")

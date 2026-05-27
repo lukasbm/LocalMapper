@@ -4,6 +4,6 @@ __name__ = "localmapper"
 __version__ = "0.1.1"
 
 
-from .localmapper import localmapper
+from .models import LocalMapper
 
-__all__ = ["localmapper"]
+__all__ = ["LocalMapper"]

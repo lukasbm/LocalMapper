@@ -1,6 +1,5 @@
 from pathlib import Path
 import getpass
-import json
 import numpy as np
 
 import torch
@@ -14,8 +13,6 @@ from dgllife.utils import (
     CanonicalBondFeaturizer,
     mol_to_bigraph,
 )
-
-from .models import LocalMapper
 
 atom_types = [
     "C",
@@ -123,88 +120,13 @@ def init_featurizer():
     )
     return node_featurizer, edge_featurizer, graph_function
 
-def get_configure(config_path, node_featurizer, edge_featurizer):
-    with open(config_path, "r") as f:
-        config = json.load(f)
-    config["in_node_feats"] = node_featurizer.feat_size()
-    config["in_edge_feats"] = edge_featurizer.feat_size()
-    return config
+def predict(model, device, rgraphs, pgraphs, grad=False):
+    if hasattr(model, "score_graphs"):
+        if grad:
+            return model.score_graphs(rgraphs, pgraphs)
+        with torch.no_grad():
+            return model.score_graphs(rgraphs, pgraphs)
 
-
-def load_model(exp_config, model_path, device):
-    model = LocalMapper(
-        node_in_feats=exp_config["in_node_feats"],
-        edge_in_feats=exp_config["in_edge_feats"],
-        node_out_feats=exp_config["node_out_feats"],
-        edge_hidden_feats=exp_config["edge_hidden_feats"],
-        num_step_message_passing=exp_config["num_step_message_passing"],
-        attention_heads=exp_config["attention_heads"],
-        attention_layers=exp_config["attention_layers"],
-    )
-    model = model.to(device)
-
-    model.load_state_dict(
-        torch.load(model_path, map_location=device)["model_state_dict"]
-    )
-    return model
-
-
-def load_model2(
-    config_path,
-    node_featurizer,
-    edge_featurizer,
-    device,
-    mode,
-    learning_rate=None,
-    weight_decay=None,
-    patience=None,
-    model_path=None,
-):
-    exp_config = get_configure(config_path, node_featurizer, edge_featurizer)
-    model = LocalMapper(
-        node_in_feats=exp_config["in_node_feats"],
-        edge_in_feats=exp_config["in_edge_feats"],
-        node_out_feats=exp_config["node_out_feats"],
-        edge_hidden_feats=exp_config["edge_hidden_feats"],
-        num_step_message_passing=exp_config["num_step_message_passing"],
-        attention_heads=exp_config["attention_heads"],
-        attention_layers=exp_config["attention_layers"],
-    )
-    model = model.to(device)
-
-    if mode == "train":
-        if model_path is None:
-            raise ValueError("model_path is required when mode='train'")
-        if learning_rate is None or weight_decay is None or patience is None:
-            raise ValueError(
-                "learning_rate, weight_decay, and patience are required when mode='train'"
-            )
-        from torch import nn
-        from torch.optim import Adam, lr_scheduler
-        from .cli_utils import EarlyStopping
-
-        loss_criterion = nn.CrossEntropyLoss()
-        optimizer = Adam(
-            model.parameters(),
-            lr=learning_rate,
-            weight_decay=weight_decay,
-        )
-        scheduler = lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode="min", factor=0.5, patience=1, min_lr=1e-4
-        )
-        stopper = EarlyStopping(
-            mode="lower", patience=patience, filename=model_path
-        )
-        return model, loss_criterion, optimizer, scheduler, stopper
-
-    if model_path is None:
-        raise ValueError("model_path is required when mode!='train'")
-
-    model.load_state_dict(torch.load(model_path, map_location=device)["model_state_dict"])
-    return model
-
-
-def predict(model, device, rgraphs, pgraphs):
     rbg, pbg = dgl.batch(rgraphs), dgl.batch(pgraphs)
     (
         rbg.set_n_initializer(dgl.init.zero_initializer),
@@ -223,7 +145,8 @@ def predict(model, device, rgraphs, pgraphs):
         rbg.edata.pop("e").to(device),
         pbg.edata.pop("e").to(device),
     )
-    with torch.no_grad():
+    context = torch.enable_grad() if grad else torch.no_grad()
+    with context:
         predicitons = model(
             rbg, pbg, rnode_feats, pnode_feats, redge_feats, pedge_feats
         )
