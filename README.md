@@ -136,6 +136,7 @@ To use the model to predict the atom-mapping on raw reactions, simply run
 ```
 python -m scripts.Test --dataset=USPTO_50K --model=LocalMapper --seed=0 --iteration=1 --split=train
 ```
+This writes the prediction CSV plus a metrics JSON with AP, MCC, accuracy, and F1 into the run directory.
 
 ### [4] Repeat
 Iteration 2 samples uncertain predicted templates first, then uses dataset ground truth to emulate the next manual annotation round.

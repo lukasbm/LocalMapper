@@ -18,14 +18,10 @@ def output_dir(root: str | Path, dataset: str, model_name: str, seed: int) -> Pa
     return Path(root) / "outputs" / dataset / run_name(model_name, seed)
 
 
-def model_dir(root: str | Path, dataset: str, model_name: str, seed: int) -> Path:
-    return Path(root) / "models" / dataset / run_name(model_name, seed)
-
-
 def checkpoint_path(
     root: str | Path, dataset: str, model_name: str, seed: int, iteration: int
 ) -> Path:
-    return model_dir(root, dataset, model_name, seed) / f"iteration_{iteration}.pth"
+    return output_dir(root, dataset, model_name, seed) / f"iteration_{iteration}.pth"
 
 
 def annotations_dir(root: str | Path, dataset: str, model_name: str, seed: int) -> Path:

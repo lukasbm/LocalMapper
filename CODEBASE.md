@@ -26,7 +26,8 @@ Run state is grouped by dataset, model name, and seed:
 - annotations: `outputs/<dataset>/<model>_seed<seed>/annotations/annotations_<iteration>.csv`
 - verified templates: `outputs/<dataset>/<model>_seed<seed>/templates/verified_templates_<iteration>.csv`
 - predictions: `outputs/<dataset>/<model>_seed<seed>/predictions/pred_<split>_<iteration>.csv`
-- checkpoints: `models/<dataset>/<model>_seed<seed>/iteration_<iteration>.pth`
+- metrics: `outputs/<dataset>/<model>_seed<seed>/predictions/metrics_<split>_<iteration>.json`
+- checkpoints: `outputs/<dataset>/<model>_seed<seed>/iteration_<iteration>.pth`
 
 ## Main Modules
 
