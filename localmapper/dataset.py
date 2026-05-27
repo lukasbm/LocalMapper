@@ -184,7 +184,7 @@ class ReactionDataset(torch.utils.data.Dataset):
         rgraph = self.mol_to_graph(Chem.MolFromSmiles(r))
         pgraph = self.mol_to_graph(Chem.MolFromSmiles(p))
         label = get_mapping_label(rxn) if self.include_labels else []
-        return data["id"], rxn, rgraph, pgraph, label, 1.0, data
+        return data["id"], rxn, rgraph, pgraph, label, data.get("weight", 1.0), data
 
     def __len__(self):
         return len(self.items)

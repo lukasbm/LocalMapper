@@ -1,72 +1,85 @@
 from pathlib import Path
 
 import fire
+import pandas as pd
 from tqdm import tqdm
 
 ROOT = Path(__file__).resolve().parents[1]
 
 import torch
 
-from localmapper.cli_utils import (
-    init_featurizer,
-    load_dataloader,
-    load_dataset_templates,
-    load_test_model,
+from localmapper.active_learning import (
+    checkpoint_path,
+    prediction_path,
+    verified_templates,
 )
+from localmapper.cli_utils import init_featurizer, load_dataloader, load_test_model
 from localmapper.dataset import mkdir_p
 
 
-def get_atom_map(
-    output_dir,
-    output_name,
-    try_twice,
+def write_predictions(
+    output_path,
     accepted_templates,
     model,
-    device,
     data_loader,
+    try_twice,
 ):
     model.eval()
-    file_path = Path(output_dir) / f"pred_{output_name}.txt"
-    with open(file_path, "w") as f:
-        f.write("Reaction_id\tMapped_reaction\tTemplate\n")
-        with torch.no_grad():
-            for batch_data in tqdm(
-                data_loader, total=len(data_loader), desc="Predicting AAM..."
-            ):
-                idxs, rxns, rbg, pbg, _, _, _, items = batch_data
-                results = model.map_rxns(
-                    rxns,
-                    accepted_templates=accepted_templates,
-                    try_twice=try_twice,
-                    return_dict=True,
+    rows = []
+    with torch.no_grad():
+        for batch_data in tqdm(
+            data_loader, total=len(data_loader), desc="Predicting AAM..."
+        ):
+            idxs, rxns, rbg, pbg, _, _, _, items = batch_data
+            logits_list = model.score_graphs(rbg, pbg)
+            results = model.map_scores(
+                rxns,
+                logits_list,
+                accepted_templates=accepted_templates,
+                try_twice=try_twice,
+                return_dict=True,
+            )
+            for result, item in zip(results, items):
+                rows.append(
+                    {
+                        "data_idx": item["id"],
+                        "split": item["split"],
+                        "mapped_rxn": result["mapped_rxn"],
+                        "template": result["template"],
+                        "confident": result["confident"],
+                        "source": item["source"],
+                        "num_mappings": item["num_mappings"],
+                    }
                 )
-                for result, item in zip(results, items):
-                    f.write(
-                        f"{item['id']}\t{result['mapped_rxn']}\t{result['template']}\n"
-                    )
-    return
+    mkdir_p(Path(output_path).parent)
+    pd.DataFrame(rows).to_csv(output_path, index=False)
 
 
 def main(
     gpu="cuda:0",
     batch_size=20,
     dataset="USPTO_50K",
-    split="test",
-    try_twice=False,
+    model="LocalMapper",
+    iteration=1,
+    split="train",
+    try_twice=True,
     seed=0,
     val_fraction=0.1,
     test_fraction=0.1,
+    checkpoint=None,
 ):
     device = torch.device(gpu) if torch.cuda.is_available() else torch.device("cpu")
     print(
-        "Testing with device %s, dataset %s, split %s"
-        % (device, dataset, split)
+        "Testing with device %s, dataset %s, split %s, iteration %s"
+        % (device, dataset, split, iteration)
     )
 
-    data_root = str(ROOT / "data")
-    output_dir = str(ROOT / "outputs" / dataset)
-    model_path = str(ROOT / "models" / dataset / "LocalMapper.pth")
-    mkdir_p(output_dir)
+    model_path = checkpoint or str(
+        checkpoint_path(ROOT, dataset, model, seed, iteration)
+    )
+    output_path = prediction_path(
+        ROOT, dataset, model, seed, split, iteration
+    )
 
     node_featurizer, edge_featurizer, mol_to_graph = init_featurizer()
     test_loader = load_dataloader(
@@ -74,29 +87,22 @@ def main(
         split,
         mol_to_graph,
         batch_size=batch_size,
-        data_root=data_root,
+        data_root=ROOT / "data",
         val_fraction=val_fraction,
         test_fraction=test_fraction,
         seed=seed,
         include_labels=False,
     )
-    model = load_test_model(
+    mapper_model = load_test_model(
         node_featurizer, edge_featurizer, mol_to_graph, device, model_path
     )
-    accepted_templates = (
-        load_dataset_templates(dataset, data_root=data_root, split="train")
-        if try_twice
-        else set()
+    accepted_templates = verified_templates(
+        ROOT, dataset, model, seed, through_iteration=iteration
     )
-    get_atom_map(
-        output_dir,
-        split,
-        try_twice,
-        accepted_templates,
-        model,
-        device,
-        test_loader,
+    write_predictions(
+        output_path, accepted_templates, mapper_model, test_loader, try_twice
     )
+    print(f"Saved predictions to {output_path}")
 
 
 if __name__ == "__main__":

@@ -153,11 +153,31 @@ class LocalMapper(nn.Module):
         single_input = isinstance(rxns, str)
         if single_input:
             rxns = [rxns]
-        has_template_filter = accepted_templates is not None
-        accepted_templates = set() if accepted_templates is None else accepted_templates
         was_training = self.training
         self.eval()
         logits_list = self.score_rxns(rxns, grad=False)
+        results = self.map_scores(
+            rxns,
+            logits_list,
+            accepted_templates=accepted_templates,
+            try_twice=try_twice,
+            return_dict=return_dict,
+        )
+
+        if was_training:
+            self.train()
+        return results[0] if single_input else results
+
+    def map_scores(
+        self,
+        rxns,
+        logits_list,
+        accepted_templates=None,
+        try_twice=True,
+        return_dict=False,
+    ):
+        has_template_filter = accepted_templates is not None
+        accepted_templates = set() if accepted_templates is None else accepted_templates
 
         results = []
         for rxn, logits in zip(rxns, logits_list):
@@ -172,7 +192,4 @@ class LocalMapper(nn.Module):
                 confident = result["template"] in accepted_templates
             result["confident"] = confident if has_template_filter else None
             results.append(result if return_dict else mapped_result["mapped_rxn"])
-
-        if was_training:
-            self.train()
-        return results[0] if single_input else results
+        return results

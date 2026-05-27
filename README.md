@@ -111,46 +111,36 @@ The mapped reactions of USPTO 50K and USPTO FULL are available at [Figshare](htt
 #### Reference dataset
 AAM predictions on reactions sampled from [USPTO 50K](https://pubs.acs.org/doi/10.1021/acs.jcim.6b00564), [Golden dataset](https://onlinelibrary.wiley.com/doi/10.1002/minf.202100138), and [Jaworski et al.](https://www.nature.com/articles/s41467-019-09440-2) generated  by LocalMapper, [RXNMapper](https://www.science.org/doi/10.1126/sciadv.abe4166), and [GraphormerMapper](https://pubs.acs.org/doi/10.1021/acs.jcim.2c00344) are provided [here](https://github.com/kaist-amsg/LocalMapper/tree/main/comparison).
 
-## Reproduce the results
-### [0] Change the chemist name
-Go to `LocalMapper/manual/` folder and change name of file `User.user` to `[your-name].user`.
-
-### [1] Sample the reaction from raw_data
-Downlaod raw data of USPTO_50K from
-From the repository root, run the sampler with `python -m scripts.Sample --iteration=1`
+## Reproduce the active-learning loop
+### [1] Emulate manual annotation
+`scripts.Sample` selects reactions and immediately attaches dataset ground truth as the emulated chemist annotation.
 ```
-python -m scripts.Sample --iteration=1
+python -m scripts.Sample --dataset=USPTO_50K --model=LocalMapper --seed=0 --iteration=1
 ```
 
-### [2] Manual map the sampled reaction
-Back to `LocalMapper/manual/` folder and use `Check_atom_mapping.ipynb` to correct the sampled reactions (0: reject and remap, 1: accept, 2: reject and skip).
-**Make sure the templates you generate are chemically correct. The model is very sensitive to these templates.**
-
-
-### [3] Train LocalMapper model
+### [2] Train LocalMapper model
 From the repository root, run the training code
 ```
-python -m scripts.Train --dataset=USPTO_50K
+python -m scripts.Train --dataset=USPTO_50K --model=LocalMapper --seed=0 --iteration=1
 ```
 
 Training starts from random weights by default. To fine-tune an existing checkpoint, use:
 ```
-python -m scripts.Train --dataset=USPTO_50K --init=checkpoint --checkpoint=models/USPTO_50K/LocalMapper.pth
+python -m scripts.Train --dataset=USPTO_50K --model=LocalMapper --seed=0 --iteration=1 --init=checkpoint --checkpoint=data/checkpoints/LocalMapper_202403.pth
 ```
 
 This training process usually takes 3~6 hours to complete using cuda-supporting GPU depending on the number of training reactions.
 
-### [4] Predict the atom-mapping for raw data
+### [3] Predict the atom-mapping for the next sampling round
 To use the model to predict the atom-mapping on raw reactions, simply run
 ```
-python -m scripts.Test --dataset=USPTO_50K --split=test
+python -m scripts.Test --dataset=USPTO_50K --model=LocalMapper --seed=0 --iteration=1 --split=train
 ```
 
-### [5] Repeat step [1]~[4]
-To sample more data for training, sample the data again and train-test the LocalMapper model by changing the arguement `-i`
-To start, you should run
+### [4] Repeat
+Iteration 2 samples uncertain predicted templates first, then uses dataset ground truth to emulate the next manual annotation round.
 ```
-python -m scripts.Sample --iteration=2
+python -m scripts.Sample --dataset=USPTO_50K --model=LocalMapper --seed=0 --iteration=2
 ```
 
 ## Publication

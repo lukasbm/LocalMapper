@@ -9,7 +9,6 @@ from .dataset import (
     ReactionDataset,
     collate_reaction_batch,
     create_reaction_dataset,
-    load_reactions,
     select_split,
 )
 from .models import LocalMapper
@@ -129,6 +128,54 @@ def load_train_val_dataloaders(
     return train_loader, val_loader
 
 
+def load_train_val_dataloaders_from_items(
+    items,
+    mol_to_graph,
+    batch_size=16,
+    val_fraction=0.1,
+    seed=0,
+):
+    import numpy as np
+
+    items = list(items)
+    if not items:
+        raise ValueError("No training items available")
+
+    rng = np.random.default_rng(seed)
+    order = rng.permutation(len(items))
+    n_val = int(round(len(items) * val_fraction))
+    val_ids = set(order[:n_val])
+
+    train_items = [item for i, item in enumerate(items) if i not in val_ids]
+    val_items = [item for i, item in enumerate(items) if i in val_ids]
+    if not train_items:
+        train_items, val_items = items, []
+
+    train_dataset = ReactionDataset.from_items(
+        train_items,
+        mol_to_graph,
+        include_labels=True,
+    )
+    val_dataset = ReactionDataset.from_items(
+        val_items,
+        mol_to_graph,
+        include_labels=True,
+    )
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        collate_fn=collate_reaction_batch,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        collate_fn=collate_reaction_batch,
+    )
+    return train_loader, val_loader
+
+
 def _build_model(node_featurizer, edge_featurizer, mol_to_graph, device):
     return LocalMapper(
         node_in_feats=node_featurizer.feat_size(),
@@ -174,15 +221,3 @@ def load_test_model(node_featurizer, edge_featurizer, mol_to_graph, device, mode
     model = _build_model(node_featurizer, edge_featurizer, mol_to_graph, device)
     model.load_checkpoint(model_path, device=device)
     return model
-
-
-def load_dataset_templates(dataset_name, data_root="data", split="train"):
-    from .LocalTemplate.template_extractor import extract_from_reaction
-
-    templates = set()
-    for item in load_reactions(dataset_name, split, data_root=data_root):
-        try:
-            templates.add(extract_from_reaction(item["rxn"]))
-        except Exception:
-            pass
-    return templates
