@@ -92,7 +92,9 @@ def _compute_metrics(y_true, y_pred, y_score):
     accuracy = (tp + tn) / total if total else 0.0
     precision = tp / (tp + fp) if (tp + fp) else 0.0
     recall = tp / (tp + fn) if (tp + fn) else 0.0
-    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
+    f1 = (
+        (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
+    )
     mcc_denom = float((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
     mcc = ((tp * tn) - (fp * fn)) / np.sqrt(mcc_denom) if mcc_denom else 0.0
 
@@ -144,9 +146,7 @@ def main(
     model_path = checkpoint or str(
         checkpoint_path(ROOT, dataset, model, seed, iteration)
     )
-    output_path = prediction_path(
-        ROOT, dataset, model, seed, split, iteration
-    )
+    output_path = prediction_path(ROOT, dataset, model, seed, split, iteration)
     metrics_path = output_path.with_name(f"metrics_{split}_{iteration}.json")
 
     node_featurizer, edge_featurizer, mol_to_graph = init_featurizer()

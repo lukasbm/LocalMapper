@@ -29,9 +29,7 @@ def main(
         val_fraction=val_fraction,
         test_fraction=test_fraction,
     )
-    output_path = save_annotations(
-        ROOT, dataset, model, seed, iteration, annotations
-    )
+    output_path = save_annotations(ROOT, dataset, model, seed, iteration, annotations)
     print(f"Saved {len(annotations)} emulated annotations to {output_path}")
 
 

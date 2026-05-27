@@ -1,5 +1,3 @@
-from pathlib import Path
-import getpass
 import numpy as np
 
 import torch
@@ -119,6 +117,7 @@ def init_featurizer():
         canonical_atom_order=False,
     )
     return node_featurizer, edge_featurizer, graph_function
+
 
 def predict(model, device, rgraphs, pgraphs, grad=False):
     if hasattr(model, "score_graphs"):

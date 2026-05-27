@@ -37,9 +37,7 @@ def run_a_train_epoch(
     model.train()
     train_loss = 0
     for batch_id, batch_data in enumerate(data_loader):
-        idxs, rxns, rbg, pbg, labels_list, masks_list, weight_list, records = (
-            batch_data
-        )
+        idxs, rxns, rbg, pbg, labels_list, masks_list, weight_list, records = batch_data
         labels_list, masks_list = (
             [labels.to(device) for labels in labels_list],
             [masks.to(device) for masks in masks_list],
@@ -131,9 +129,7 @@ def main(
     mkdir_p(model_dir)
 
     node_featurizer, edge_featurizer, mol_to_graph = init_featurizer()
-    train_items = training_items_from_annotations(
-        ROOT, dataset, model, seed, iteration
-    )
+    train_items = training_items_from_annotations(ROOT, dataset, model, seed, iteration)
     pseudo_items = confident_pseudo_items(
         ROOT,
         dataset,
@@ -162,9 +158,7 @@ def main(
     checkpoint_path_to_load = checkpoint
     init_mode = init
     if init == "auto":
-        previous_checkpoint = checkpoint_path(
-            ROOT, dataset, model, seed, iteration - 1
-        )
+        previous_checkpoint = checkpoint_path(ROOT, dataset, model, seed, iteration - 1)
         if checkpoint_path_to_load is not None:
             init_mode = "checkpoint"
         elif iteration > 1 and previous_checkpoint.exists():

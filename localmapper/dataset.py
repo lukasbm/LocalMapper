@@ -87,7 +87,9 @@ def _valid_rxn(rxn: Any) -> bool:
 def _alternatives(value: Any) -> list[str]:
     if not isinstance(value, str):
         return []
-    return [part.strip() for part in value.strip().split(",") if _valid_rxn(part.strip())]
+    return [
+        part.strip() for part in value.strip().split(",") if _valid_rxn(part.strip())
+    ]
 
 
 def _item(
@@ -224,29 +226,23 @@ class SchneiderDataset(ReactionDataset):
 
 class RingReactionsDataset(ReactionDataset):
     def load_items(self) -> list[dict[str, Any]]:
-        return (
-            _from_line_file(
-                self.data_root / "ringreactions" / "train_ringreactions.csv",
-                split="train",
-            )
-            + _from_line_file(
-                self.data_root / "ringreactions" / "test_ringreactions.csv",
-                split="test",
-            )
+        return _from_line_file(
+            self.data_root / "ringreactions" / "train_ringreactions.csv",
+            split="train",
+        ) + _from_line_file(
+            self.data_root / "ringreactions" / "test_ringreactions.csv",
+            split="test",
         )
 
 
 class MetAMDBDataset(ReactionDataset):
     def load_items(self) -> list[dict[str, Any]]:
-        return (
-            _from_semicolon_file(
-                self.data_root / "metAMDB" / "train_metamdb_filtered.csv",
-                split="train",
-            )
-            + _from_semicolon_file(
-                self.data_root / "metAMDB" / "test_metamdb_filtered.csv",
-                split="test",
-            )
+        return _from_semicolon_file(
+            self.data_root / "metAMDB" / "train_metamdb_filtered.csv",
+            split="train",
+        ) + _from_semicolon_file(
+            self.data_root / "metAMDB" / "test_metamdb_filtered.csv",
+            split="test",
         )
 
 

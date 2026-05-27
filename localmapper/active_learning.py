@@ -39,7 +39,10 @@ def templates_dir(root: str | Path, dataset: str, model_name: str, seed: int) ->
 def annotation_path(
     root: str | Path, dataset: str, model_name: str, seed: int, iteration: int
 ) -> Path:
-    return annotations_dir(root, dataset, model_name, seed) / f"annotations_{iteration}.csv"
+    return (
+        annotations_dir(root, dataset, model_name, seed)
+        / f"annotations_{iteration}.csv"
+    )
 
 
 def prediction_path(
@@ -50,13 +53,19 @@ def prediction_path(
     split: str,
     iteration: int,
 ) -> Path:
-    return predictions_dir(root, dataset, model_name, seed) / f"pred_{split}_{iteration}.csv"
+    return (
+        predictions_dir(root, dataset, model_name, seed)
+        / f"pred_{split}_{iteration}.csv"
+    )
 
 
 def template_library_path(
     root: str | Path, dataset: str, model_name: str, seed: int, iteration: int
 ) -> Path:
-    return templates_dir(root, dataset, model_name, seed) / f"verified_templates_{iteration}.csv"
+    return (
+        templates_dir(root, dataset, model_name, seed)
+        / f"verified_templates_{iteration}.csv"
+    )
 
 
 def template_for(rxn: str) -> str | None:
@@ -172,8 +181,12 @@ def sample_annotations(
     predicted_templates: dict[str, str | None] = {}
 
     if iteration > 1:
-        pred_path = prediction_path(root, dataset, model_name, seed, split, iteration - 1)
-        known_templates = verified_templates(root, dataset, model_name, seed, iteration - 1)
+        pred_path = prediction_path(
+            root, dataset, model_name, seed, split, iteration - 1
+        )
+        known_templates = verified_templates(
+            root, dataset, model_name, seed, iteration - 1
+        )
         if pred_path.exists() and known_templates:
             predictions = pd.read_csv(pred_path, dtype={"data_idx": str})
             predictions = predictions[
@@ -335,9 +348,7 @@ def confident_pseudo_items(
     rng = np.random.default_rng(seed + 10_000 + iteration)
     for _, group in predictions.groupby("template"):
         n = min(per_template, len(group))
-        sampled.append(
-            group.sample(n=n, random_state=int(rng.integers(0, 2**31 - 1)))
-        )
+        sampled.append(group.sample(n=n, random_state=int(rng.integers(0, 2**31 - 1))))
     pseudo = pd.concat(sampled, ignore_index=True) if sampled else pd.DataFrame()
     return [
         {
