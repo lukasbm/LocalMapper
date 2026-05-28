@@ -77,6 +77,54 @@ def canonicalize_map_rxn(rxn):
     return ">>".join(new_rxn)
 
 
+def mapping_signature(rxn: str) -> tuple[tuple[str, str], tuple[tuple[int, int], ...]] | None:
+    try:
+        rxn = canonicalize_map_rxn(rxn)
+        rsmi, psmi = rxn.split(">>")
+        rmol = Chem.MolFromSmiles(rsmi)
+        pmol = Chem.MolFromSmiles(psmi)
+    except Exception:
+        return None
+    if rmol is None or pmol is None:
+        return None
+
+    r_demapped = Chem.RWMol(rmol)
+    p_demapped = Chem.RWMol(pmol)
+    for mol in (r_demapped, p_demapped):
+        for atom in mol.GetAtoms():
+            atom.SetAtomMapNum(0)
+    pattern = (
+        Chem.MolToSmiles(r_demapped, canonical=True, isomericSmiles=True),
+        Chem.MolToSmiles(p_demapped, canonical=True, isomericSmiles=True),
+    )
+
+    reactant_map_to_idx = {
+        atom.GetAtomMapNum(): atom.GetIdx()
+        for atom in rmol.GetAtoms()
+        if atom.GetAtomMapNum() > 0
+    }
+    pairs = []
+    for product_idx, atom in enumerate(pmol.GetAtoms()):
+        map_num = atom.GetAtomMapNum()
+        if map_num <= 0 or map_num not in reactant_map_to_idx:
+            return None
+        pairs.append((product_idx, reactant_map_to_idx[map_num]))
+    return pattern, tuple(pairs)
+
+
+def mappings_are_equivalent(predicted_rxn: str, reference_rxn: str) -> bool:
+    predicted = mapping_signature(predicted_rxn)
+    reference = mapping_signature(reference_rxn)
+    return predicted is not None and predicted == reference
+
+
+def mapping_matches_any(predicted_rxn: str, reference_rxns: list[str]) -> bool:
+    predicted = mapping_signature(predicted_rxn)
+    if predicted is None:
+        return False
+    return any(predicted == mapping_signature(reference) for reference in reference_rxns)
+
+
 def _valid_rxn(rxn: Any) -> bool:
     if not isinstance(rxn, str) or rxn.count(">>") != 1:
         return False
@@ -106,7 +154,9 @@ def _item(
     return {
         "id": str(idx),
         "rxn": rxns[0],
+        "mapped_rxns": rxns,
         "split": split,
+        "original_split": split,
         "source": None if pd.isna(source) else source,
         "num_mappings": len(rxns),
     }
@@ -133,18 +183,19 @@ def _from_frame(
     return items
 
 
-def _from_line_file(path: Path, *, split: str) -> list[dict[str, Any]]:
+def _from_line_file(path: Path, *, split: str, id_prefix: str | None = None) -> list[dict[str, Any]]:
     items = []
     with path.open() as f:
         for i, line in enumerate(f):
             rxns = _alternatives(line.rstrip("\n\r"))
-            item = _item(i, None, split=split, alternatives=rxns)
+            idx = f"{id_prefix}:{i}" if id_prefix else i
+            item = _item(idx, None, split=split, alternatives=rxns)
             if item is not None:
                 items.append(item)
     return items
 
 
-def _from_semicolon_file(path: Path, *, split: str) -> list[dict[str, Any]]:
+def _from_semicolon_file(path: Path, *, split: str, id_prefix: str | None = None) -> list[dict[str, Any]]:
     items = []
     with path.open() as f:
         for i, line in enumerate(f):
@@ -152,6 +203,7 @@ def _from_semicolon_file(path: Path, *, split: str) -> list[dict[str, Any]]:
             if not line:
                 continue
             idx, payload = line.split(";", 1) if ";" in line else (i, line)
+            idx = f"{id_prefix}:{idx}" if id_prefix else idx
             item = _item(idx, None, split=split, alternatives=_alternatives(payload))
             if item is not None:
                 items.append(item)
@@ -215,7 +267,7 @@ class GoldenDataset(ReactionDataset):
 class NatCommDataset(ReactionDataset):
     def load_items(self) -> list[dict[str, Any]]:
         df = pd.read_csv(self.data_root / "NatComm" / "test_data.csv")
-        return _from_frame(df, "mapped_rxn", split="test", source_col="source")
+        return _from_frame(df, "mapped_rxn", source_col="source")
 
 
 class SchneiderDataset(ReactionDataset):
@@ -228,10 +280,12 @@ class RingReactionsDataset(ReactionDataset):
     def load_items(self) -> list[dict[str, Any]]:
         return _from_line_file(
             self.data_root / "ringreactions" / "train_ringreactions.csv",
-            split="train",
+            split=None,
+            id_prefix="train",
         ) + _from_line_file(
             self.data_root / "ringreactions" / "test_ringreactions.csv",
-            split="test",
+            split=None,
+            id_prefix="test",
         )
 
 
@@ -239,10 +293,12 @@ class MetAMDBDataset(ReactionDataset):
     def load_items(self) -> list[dict[str, Any]]:
         return _from_semicolon_file(
             self.data_root / "metAMDB" / "train_metamdb_filtered.csv",
-            split="train",
+            split=None,
+            id_prefix="train",
         ) + _from_semicolon_file(
             self.data_root / "metAMDB" / "test_metamdb_filtered.csv",
-            split="test",
+            split=None,
+            id_prefix="test",
         )
 
 

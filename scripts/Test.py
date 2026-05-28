@@ -16,7 +16,7 @@ from localmapper.active_learning import (
     verified_templates,
 )
 from localmapper.cli_utils import init_featurizer, load_dataloader, load_test_model
-from localmapper.dataset import mkdir_p
+from localmapper.dataset import mapping_matches_any, mkdir_p
 
 
 def write_predictions(
@@ -30,6 +30,7 @@ def write_predictions(
     model.eval()
     rows = []
     correctness_labels = []
+    raw_correctness_labels = []
     mapping_scores = []
     confidence_predictions = []
     with torch.no_grad():
@@ -46,10 +47,13 @@ def write_predictions(
                 return_dict=True,
             )
             for result, item in zip(results, items):
-                correct = result["mapped_rxn"] == item["rxn"]
+                reference_rxns = item.get("mapped_rxns", [item["rxn"]])
+                raw_correct = result["mapped_rxn"] in reference_rxns
+                correct = mapping_matches_any(result["mapped_rxn"], reference_rxns)
                 mapping_score = _mapping_score(result)
                 confidence = bool(result["confident"])
                 correctness_labels.append(bool(correct))
+                raw_correctness_labels.append(bool(raw_correct))
                 mapping_scores.append(mapping_score)
                 confidence_predictions.append(confidence)
                 rows.append(
@@ -62,6 +66,7 @@ def write_predictions(
                         "confident": result["confident"],
                         "mapping_score": mapping_score,
                         "is_correct": correct,
+                        "raw_is_correct": raw_correct,
                         "source": item["source"],
                         "num_mappings": item["num_mappings"],
                     }
@@ -73,6 +78,11 @@ def write_predictions(
     metrics = _compute_metrics(
         np.asarray(correctness_labels, dtype=bool),
         np.asarray(mapping_scores, dtype=float),
+    )
+    metrics["raw_exact_match_accuracy"] = (
+        float(np.asarray(raw_correctness_labels, dtype=bool).mean())
+        if raw_correctness_labels
+        else 0.0
     )
     template_confidence_metrics = _compute_confidence_metrics(
         np.asarray(correctness_labels, dtype=bool),
@@ -259,7 +269,7 @@ def main(
         try_twice,
     )
     print(
-        "AP: {ap:.4f}, MCC: {mcc:.4f}, Accuracy: {accuracy:.4f}, F1: {f1:.4f}, Exact: {exact_match_accuracy:.4f}".format(
+        "AP: {ap:.4f}, MCC: {mcc:.4f}, Accuracy: {accuracy:.4f}, F1: {f1:.4f}, EquivExact: {exact_match_accuracy:.4f}, RawExact: {raw_exact_match_accuracy:.4f}".format(
             **metrics
         )
     )
