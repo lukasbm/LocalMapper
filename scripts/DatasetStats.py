@@ -10,7 +10,7 @@ import argparse
 from rdkit import Chem
 
 from localmapper.LocalTemplate.template_extractor import extract_from_reaction
-from localmapper.dataset import DATASETS, get_mapping_label
+from localmapper.dataset import DATASETS, normalize_item_target
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -108,10 +108,11 @@ def summarize_dataset(
     valid_items = []
     invalid_mapping = 0
     for item in raw_items:
-        if get_mapping_label(item["rxn"]) is None:
+        normalized_item = normalize_item_target(item)
+        if normalized_item is None:
             invalid_mapping += 1
         else:
-            valid_items.append(item)
+            valid_items.append(normalized_item)
 
     mapped_rxns = [item["rxn"] for item in valid_items]
     mapping_alternatives = [int(item.get("num_mappings", 1) or 1) for item in raw_items]

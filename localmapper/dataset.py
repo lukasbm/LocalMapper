@@ -125,6 +125,14 @@ def mapping_matches_any(predicted_rxn: str, reference_rxns: list[str]) -> bool:
     return any(predicted == mapping_signature(reference) for reference in reference_rxns)
 
 
+def normalize_mapped_rxn(rxn: str) -> str | None:
+    try:
+        normalized = canonicalize_map_rxn(rxn)
+    except Exception:
+        return None
+    return normalized if get_mapping_label(normalized) is not None else None
+
+
 def _valid_rxn(rxn: Any) -> bool:
     if not isinstance(rxn, str) or rxn.count(">>") != 1:
         return False
@@ -336,10 +344,34 @@ def create_reaction_dataset(
         data_root=data_root,
         include_labels=include_labels,
     )
-    dataset_obj.items = [
-        item for item in dataset_obj.items if get_mapping_label(item["rxn"]) is not None
-    ]
+    dataset_obj.items = [item for item in dataset_obj.items if item_has_valid_mapping(item)]
     return dataset_obj
+
+
+def normalize_item_target(item: dict[str, Any]) -> dict[str, Any] | None:
+    reference_rxns = item.get("mapped_rxns", [item["rxn"]])
+    normalized_rxn = next(
+        (
+            normalized
+            for reference_rxn in reference_rxns
+            if (normalized := normalize_mapped_rxn(reference_rxn))
+        ),
+        None,
+    )
+    if normalized_rxn is None:
+        return None
+    return {**item, "rxn": normalized_rxn}
+
+
+def normalize_item_targets(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [item for item in (normalize_item_target(item) for item in items) if item]
+
+
+def item_has_valid_mapping(item: dict[str, Any]) -> bool:
+    return any(
+        get_mapping_label(reference_rxn) is not None
+        for reference_rxn in item.get("mapped_rxns", [item["rxn"]])
+    )
 
 
 def select_split(
@@ -353,7 +385,7 @@ def select_split(
     split = split.lower()
     explicit = [item for item in items if item["split"] == split]
     if explicit:
-        return explicit
+        return normalize_item_targets(explicit)
 
     unsplit = [item for item in items if item["split"] is None]
     if not unsplit:
@@ -371,7 +403,7 @@ def select_split(
         item_split = "test" if i in test_ids else "val" if i in val_ids else "train"
         if item_split == split:
             selected.append({**item, "split": item_split})
-    return selected
+    return normalize_item_targets(selected)
 
 
 def load_dataset_items(
@@ -381,7 +413,7 @@ def load_dataset_items(
 ) -> list[dict[str, Any]]:
     # For code that only needs the reaction list, not graph construction.
     items = create_reaction_dataset(dataset, lambda mol: mol, data_root=data_root).items
-    return [item for item in items if get_mapping_label(item["rxn"]) is not None]
+    return [item for item in items if item_has_valid_mapping(item)]
 
 
 def load_reactions(
