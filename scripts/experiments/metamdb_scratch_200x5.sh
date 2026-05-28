@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
-PYTHON="${PYTHON:-python}"
+read -r -a PYTHON_CMD <<< "${PYTHON:-uv run python}"
 DATASET="${DATASET:-metAMDB}"
 MODEL="${MODEL:-LocalMapper_scratch}"
 SEED="${SEED:-0}"
@@ -24,7 +24,7 @@ mkdir -p "$MPLCONFIGDIR"
 
 for ITERATION in $(seq 1 "$ITERATIONS"); do
   echo "=== ${DATASET} scratch iteration ${ITERATION}/${ITERATIONS} ==="
-  "$PYTHON" -m scripts.Sample \
+  "${PYTHON_CMD[@]}" -m scripts.Sample \
     --dataset="$DATASET" \
     --model="$MODEL" \
     --seed="$SEED" \
@@ -34,7 +34,7 @@ for ITERATION in $(seq 1 "$ITERATIONS"); do
     --val_fraction="$VAL_FRACTION" \
     --test_fraction="$TEST_FRACTION"
 
-  "$PYTHON" -m scripts.Train \
+  "${PYTHON_CMD[@]}" -m scripts.Train \
     --dataset="$DATASET" \
     --model="$MODEL" \
     --seed="$SEED" \
@@ -48,7 +48,7 @@ for ITERATION in $(seq 1 "$ITERATIONS"); do
     --init=auto \
     --confident_per_template="$CONFIDENT_PER_TEMPLATE"
 
-  "$PYTHON" -m scripts.Test \
+  "${PYTHON_CMD[@]}" -m scripts.Test \
     --dataset="$DATASET" \
     --model="$MODEL" \
     --seed="$SEED" \

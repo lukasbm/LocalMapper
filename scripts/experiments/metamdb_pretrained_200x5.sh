@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
-PYTHON="${PYTHON:-python}"
+read -r -a PYTHON_CMD <<< "${PYTHON:-uv run python}"
 DATASET="${DATASET:-metAMDB}"
 MODEL="${MODEL:-LocalMapper_pretrained}"
 SEED="${SEED:-0}"
@@ -25,7 +25,7 @@ mkdir -p "$MPLCONFIGDIR"
 
 for ITERATION in $(seq 1 "$ITERATIONS"); do
   echo "=== ${DATASET} pretrained iteration ${ITERATION}/${ITERATIONS} ==="
-  "$PYTHON" -m scripts.Sample \
+  "${PYTHON_CMD[@]}" -m scripts.Sample \
     --dataset="$DATASET" \
     --model="$MODEL" \
     --seed="$SEED" \
@@ -54,9 +54,9 @@ for ITERATION in $(seq 1 "$ITERATIONS"); do
   else
     TRAIN_ARGS+=(--init=auto)
   fi
-  "$PYTHON" "${TRAIN_ARGS[@]}"
+  "${PYTHON_CMD[@]}" "${TRAIN_ARGS[@]}"
 
-  "$PYTHON" -m scripts.Test \
+  "${PYTHON_CMD[@]}" -m scripts.Test \
     --dataset="$DATASET" \
     --model="$MODEL" \
     --seed="$SEED" \
