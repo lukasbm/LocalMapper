@@ -16,7 +16,7 @@ from localmapper.active_learning import (
     verified_templates,
 )
 from localmapper.cli_utils import init_featurizer, load_dataloader, load_test_model
-from localmapper.dataset import mapping_matches_any, mkdir_p
+from localmapper.dataset import mapping_matches_any, mapping_signature, mkdir_p
 
 
 def write_predictions(
@@ -31,6 +31,9 @@ def write_predictions(
     rows = []
     correctness_labels = []
     raw_correctness_labels = []
+    atom_correct = 0
+    atom_total = 0
+    invalid_mapping_count = 0
     mapping_scores = []
     confidence_predictions = []
     with torch.no_grad():
@@ -50,6 +53,12 @@ def write_predictions(
                 reference_rxns = item.get("mapped_rxns", [item["rxn"]])
                 raw_correct = result["mapped_rxn"] in reference_rxns
                 correct = mapping_matches_any(result["mapped_rxn"], reference_rxns)
+                atom_metrics = _atom_correspondence_metrics(
+                    result["mapped_rxn"], reference_rxns
+                )
+                atom_correct += atom_metrics["correct"]
+                atom_total += atom_metrics["total"]
+                invalid_mapping_count += int(atom_metrics["invalid"])
                 mapping_score = _mapping_score(result)
                 confidence = bool(result["confident"])
                 correctness_labels.append(bool(correct))
@@ -67,6 +76,10 @@ def write_predictions(
                         "mapping_score": mapping_score,
                         "is_correct": correct,
                         "raw_is_correct": raw_correct,
+                        "atom_correct": atom_metrics["correct"],
+                        "atom_total": atom_metrics["total"],
+                        "atom_accuracy": atom_metrics["accuracy"],
+                        "invalid_mapping": atom_metrics["invalid"],
                         "source": item["source"],
                         "num_mappings": item["num_mappings"],
                     }
@@ -79,6 +92,19 @@ def write_predictions(
         np.asarray(correctness_labels, dtype=bool),
         np.asarray(mapping_scores, dtype=float),
     )
+    metrics["aam"] = {
+        "equiv_exact_match_accuracy": metrics["exact_match_accuracy"],
+        "raw_exact_match_accuracy": (
+            float(np.asarray(raw_correctness_labels, dtype=bool).mean())
+            if raw_correctness_labels
+            else 0.0
+        ),
+        "atom_accuracy": float(atom_correct / atom_total) if atom_total else 0.0,
+        "atom_correct": int(atom_correct),
+        "atom_total": int(atom_total),
+        "invalid_mapping_count": int(invalid_mapping_count),
+        "total": int(len(correctness_labels)),
+    }
     metrics["raw_exact_match_accuracy"] = (
         float(np.asarray(raw_correctness_labels, dtype=bool).mean())
         if raw_correctness_labels
@@ -93,6 +119,50 @@ def write_predictions(
     with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=2, sort_keys=True)
     return metrics
+
+
+def _atom_correspondence_metrics(predicted_rxn, reference_rxns):
+    predicted = mapping_signature(predicted_rxn)
+    references = [
+        signature for rxn in reference_rxns if (signature := mapping_signature(rxn))
+    ]
+    if not references:
+        return {"correct": 0, "total": 0, "accuracy": 0.0, "invalid": True}
+    fallback_total = max(len(reference_pairs) for _, reference_pairs in references)
+    if predicted is None:
+        return {
+            "correct": 0,
+            "total": int(fallback_total),
+            "accuracy": 0.0,
+            "invalid": True,
+        }
+
+    predicted_pattern, predicted_pairs = predicted
+    predicted_map = dict(predicted_pairs)
+    best_correct = 0
+    best_total = 0
+    for reference_pattern, reference_pairs in references:
+        if reference_pattern != predicted_pattern:
+            continue
+        reference_map = dict(reference_pairs)
+        total = len(reference_map)
+        correct = sum(
+            predicted_map.get(product_idx) == reactant_idx
+            for product_idx, reactant_idx in reference_map.items()
+        )
+        if correct > best_correct:
+            best_correct = correct
+            best_total = total
+
+    if best_total == 0:
+        best_total = fallback_total
+
+    return {
+        "correct": int(best_correct),
+        "total": int(best_total),
+        "accuracy": float(best_correct / best_total) if best_total else 0.0,
+        "invalid": False,
+    }
 
 
 def _mapping_score(result):
@@ -269,7 +339,12 @@ def main(
         try_twice,
     )
     print(
-        "AP: {ap:.4f}, MCC: {mcc:.4f}, Accuracy: {accuracy:.4f}, F1: {f1:.4f}, EquivExact: {exact_match_accuracy:.4f}, RawExact: {raw_exact_match_accuracy:.4f}".format(
+        "AAM EquivExact: {equiv_exact_match_accuracy:.4f}, AtomAcc: {atom_accuracy:.4f}, RawExact: {raw_exact_match_accuracy:.4f}, Invalid: {invalid_mapping_count}/{total}".format(
+            **metrics["aam"]
+        )
+    )
+    print(
+        "Score calibration: AP: {ap:.4f}, MCC: {mcc:.4f}, Accuracy: {accuracy:.4f}, F1: {f1:.4f}".format(
             **metrics
         )
     )

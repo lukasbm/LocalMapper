@@ -6,7 +6,8 @@ cd "$ROOT_DIR"
 
 read -r -a PYTHON_CMD <<< "${PYTHON:-uv run python}"
 DATASET="${DATASET:-metAMDB}"
-MODEL="${MODEL:-LocalMapper_scratch}"
+RUN_ID="$(date +%Y%m%d_%H%M%S)_${RANDOM}"
+MODEL="${MODEL:-LocalMapper_scratch_${RUN_ID}}"
 SEED="${SEED:-0}"
 GPU="${GPU:-cuda:0}"
 SAMPLE_LIMIT="${SAMPLE_LIMIT:-200}"
@@ -21,6 +22,7 @@ TEST_FRACTION="${TEST_FRACTION:-0.1}"
 MPLCONFIGDIR="${MPLCONFIGDIR:-/tmp/localmapper-mpl}"
 export MPLCONFIGDIR
 mkdir -p "$MPLCONFIGDIR"
+echo "Using MODEL=${MODEL}"
 
 for ITERATION in $(seq 1 "$ITERATIONS"); do
   echo "=== ${DATASET} scratch iteration ${ITERATION}/${ITERATIONS} ==="
