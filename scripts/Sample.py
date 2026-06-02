@@ -9,6 +9,7 @@ from localmapper.active_learning import (
     load_dataset_split,
     sample_annotations,
     save_annotations,
+    save_rejected_template_library,
 )
 
 
@@ -21,7 +22,9 @@ def main(
     seed=0,
     val_fraction=0.1,
     test_fraction=0.1,
+    sample_candidate_factor=20,
 ):
+    max_candidates = max(sample_limit * sample_candidate_factor, sample_limit)
     split_items = load_dataset_split(
         dataset,
         split,
@@ -29,6 +32,7 @@ def main(
         seed=seed,
         val_fraction=val_fraction,
         test_fraction=test_fraction,
+        max_candidates=max_candidates,
     )
     annotations = load_annotations(ROOT, dataset, model, seed, iteration - 1)
     annotated_ids = (
@@ -51,9 +55,21 @@ def main(
         data_root=ROOT / "data",
         val_fraction=val_fraction,
         test_fraction=test_fraction,
+        items=split_items,
+        max_candidates=max_candidates,
     )
     output_path = save_annotations(ROOT, dataset, model, seed, iteration, annotations)
+    rejected_path = save_rejected_template_library(
+        ROOT,
+        dataset,
+        model,
+        seed,
+        split,
+        through_prediction_iteration=iteration - 1,
+        through_annotation_iteration=iteration,
+    )
     print(f"Saved {len(annotations)} emulated annotations to {output_path}")
+    print(f"Saved rejected-template memory to {rejected_path}")
 
 
 if __name__ == "__main__":

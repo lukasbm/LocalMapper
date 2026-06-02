@@ -26,6 +26,7 @@ echo "Using MODEL=${MODEL}"
 
 for ITERATION in $(seq 1 "$ITERATIONS"); do
   echo "=== ${DATASET} scratch iteration ${ITERATION}/${ITERATIONS} ==="
+  echo "--- Sampling annotations ---"
   "${PYTHON_CMD[@]}" -m scripts.Sample \
     --dataset="$DATASET" \
     --model="$MODEL" \
@@ -36,6 +37,7 @@ for ITERATION in $(seq 1 "$ITERATIONS"); do
     --val_fraction="$VAL_FRACTION" \
     --test_fraction="$TEST_FRACTION"
 
+  echo "--- Training mapper ---"
   "${PYTHON_CMD[@]}" -m scripts.Train \
     --dataset="$DATASET" \
     --model="$MODEL" \
@@ -50,6 +52,7 @@ for ITERATION in $(seq 1 "$ITERATIONS"); do
     --init=auto \
     --confident_per_template="$CONFIDENT_PER_TEMPLATE"
 
+  echo "--- Testing mapper ---"
   "${PYTHON_CMD[@]}" -m scripts.Test \
     --dataset="$DATASET" \
     --model="$MODEL" \

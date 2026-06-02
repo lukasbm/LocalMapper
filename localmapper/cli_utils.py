@@ -141,13 +141,17 @@ def load_train_val_dataloaders_from_items(
     if not items:
         raise ValueError("No training items available")
 
-    rng = np.random.default_rng(seed)
-    order = rng.permutation(len(items))
-    n_val = int(round(len(items) * val_fraction))
-    val_ids = set(order[:n_val])
+    if any("train_split" in item for item in items):
+        train_items = [item for item in items if item.get("train_split") != "val"]
+        val_items = [item for item in items if item.get("train_split") == "val"]
+    else:
+        rng = np.random.default_rng(seed)
+        order = rng.permutation(len(items))
+        n_val = int(round(len(items) * val_fraction))
+        val_ids = set(order[:n_val])
 
-    train_items = [item for i, item in enumerate(items) if i not in val_ids]
-    val_items = [item for i, item in enumerate(items) if i in val_ids]
+        train_items = [item for i, item in enumerate(items) if i not in val_ids]
+        val_items = [item for i, item in enumerate(items) if i in val_ids]
     if not train_items:
         train_items, val_items = items, []
 

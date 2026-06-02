@@ -16,7 +16,12 @@ from localmapper.active_learning import (
     verified_templates,
 )
 from localmapper.cli_utils import init_featurizer, load_dataloader, load_test_model
-from localmapper.dataset import mapping_matches_any, mapping_signature, mkdir_p
+from localmapper.dataset import (
+    mapping_comparison_backend,
+    mapping_matches_any,
+    mapping_signature,
+    mkdir_p,
+)
 
 
 def write_predictions(
@@ -88,33 +93,35 @@ def write_predictions(
     df = pd.DataFrame(rows)
     df.to_csv(output_path, index=False)
 
-    metrics = _compute_metrics(
+    score_calibration = _compute_score_calibration(
         np.asarray(correctness_labels, dtype=bool),
         np.asarray(mapping_scores, dtype=float),
     )
-    metrics["aam"] = {
-        "equiv_exact_match_accuracy": metrics["exact_match_accuracy"],
-        "raw_exact_match_accuracy": (
-            float(np.asarray(raw_correctness_labels, dtype=bool).mean())
-            if raw_correctness_labels
-            else 0.0
+    metrics = {
+        "aam": {
+            "equiv_exact_match_accuracy": (
+                float(np.asarray(correctness_labels, dtype=bool).mean())
+                if correctness_labels
+                else 0.0
+            ),
+            "raw_exact_match_accuracy": (
+                float(np.asarray(raw_correctness_labels, dtype=bool).mean())
+                if raw_correctness_labels
+                else 0.0
+            ),
+            "atom_accuracy": float(atom_correct / atom_total) if atom_total else 0.0,
+            "atom_correct": int(atom_correct),
+            "atom_total": int(atom_total),
+            "invalid_mapping_count": int(invalid_mapping_count),
+            "total": int(len(correctness_labels)),
+            "equivalence_backend": mapping_comparison_backend(),
+        },
+        "score_calibration": score_calibration,
+        "template_confidence": _compute_confidence_metrics(
+            np.asarray(correctness_labels, dtype=bool),
+            np.asarray(confidence_predictions, dtype=bool),
         ),
-        "atom_accuracy": float(atom_correct / atom_total) if atom_total else 0.0,
-        "atom_correct": int(atom_correct),
-        "atom_total": int(atom_total),
-        "invalid_mapping_count": int(invalid_mapping_count),
-        "total": int(len(correctness_labels)),
     }
-    metrics["raw_exact_match_accuracy"] = (
-        float(np.asarray(raw_correctness_labels, dtype=bool).mean())
-        if raw_correctness_labels
-        else 0.0
-    )
-    template_confidence_metrics = _compute_confidence_metrics(
-        np.asarray(correctness_labels, dtype=bool),
-        np.asarray(confidence_predictions, dtype=bool),
-    )
-    metrics["template_confidence"] = template_confidence_metrics
     mkdir_p(Path(metrics_path).parent)
     with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=2, sort_keys=True)
@@ -187,6 +194,9 @@ def _compute_confidence_metrics(y_true, y_pred):
     total = int(len(y_true))
 
     accuracy = (tp + tn) / total if total else 0.0
+    coverage = float(y_pred.mean()) if total else 0.0
+    confident_accuracy = float(y_true[y_pred].mean()) if np.any(y_pred) else 0.0
+    unconfident_accuracy = float(y_true[~y_pred].mean()) if np.any(~y_pred) else 0.0
     precision = tp / (tp + fp) if (tp + fp) else 0.0
     recall = tp / (tp + fn) if (tp + fn) else 0.0
     f1 = (
@@ -197,6 +207,11 @@ def _compute_confidence_metrics(y_true, y_pred):
 
     return {
         "accuracy": float(accuracy),
+        "coverage": coverage,
+        "confident_accuracy": confident_accuracy,
+        "unconfident_accuracy": unconfident_accuracy,
+        "precision": float(precision),
+        "recall": float(recall),
         "f1": float(f1),
         "mcc": float(mcc),
         "confusion": {
@@ -209,7 +224,7 @@ def _compute_confidence_metrics(y_true, y_pred):
     }
 
 
-def _compute_metrics(y_true, y_score):
+def _compute_score_calibration(y_true, y_score):
     y_true = y_true.astype(bool)
     y_score = y_score.astype(float)
     threshold, y_pred = _best_threshold(y_true, y_score)
@@ -245,6 +260,7 @@ def _compute_metrics(y_true, y_score):
         "accuracy": float(accuracy),
         "f1": float(f1),
         "threshold": float(threshold),
+        "threshold_source": "best_f1_on_evaluation",
         "confusion": {
             "tp": tp,
             "tn": tn,
@@ -252,7 +268,6 @@ def _compute_metrics(y_true, y_score):
             "fn": fn,
             "total": total,
         },
-        "exact_match_accuracy": float(y_true.mean()) if total else 0.0,
     }
 
 
@@ -339,13 +354,18 @@ def main(
         try_twice,
     )
     print(
-        "AAM EquivExact: {equiv_exact_match_accuracy:.4f}, AtomAcc: {atom_accuracy:.4f}, RawExact: {raw_exact_match_accuracy:.4f}, Invalid: {invalid_mapping_count}/{total}".format(
+        "AAM {equivalence_backend} EquivExact: {equiv_exact_match_accuracy:.4f}, AtomAcc: {atom_accuracy:.4f}, RawExact: {raw_exact_match_accuracy:.4f}, Invalid: {invalid_mapping_count}/{total}".format(
             **metrics["aam"]
         )
     )
     print(
         "Score calibration: AP: {ap:.4f}, MCC: {mcc:.4f}, Accuracy: {accuracy:.4f}, F1: {f1:.4f}".format(
-            **metrics
+            **metrics["score_calibration"]
+        )
+    )
+    print(
+        "Template confidence: Coverage: {coverage:.4f}, ConfAcc: {confident_accuracy:.4f}, UnconfAcc: {unconfident_accuracy:.4f}, MCC: {mcc:.4f}".format(
+            **metrics["template_confidence"]
         )
     )
     print(f"Saved predictions to {output_path}")

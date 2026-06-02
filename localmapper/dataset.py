@@ -2,13 +2,23 @@ from __future__ import annotations
 
 import errno
 import os
+import signal
+import threading
+import tempfile
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
 import torch
-from rdkit import Chem
+from rdkit import Chem, DataStructs
+from rdkit.Chem import AllChem
+
+try:
+    from tqdm import tqdm
+except Exception:
+    tqdm = None
 
 
 def mkdir_p(path):
@@ -28,18 +38,105 @@ def get_adm(mol, max_distance=4):
     return dm
 
 
-def product_is_unmapped(rxn):
+def _reaction_mols(rxn: str):
+    if not _valid_rxn(rxn):
+        return None, None
     r, p = [Chem.MolFromSmiles(smi) for smi in rxn.split(">>")]
-    rmaps = [atom.GetAtomMapNum() for atom in r.GetAtoms()]
+    return r, p
+
+
+@lru_cache(maxsize=100_000)
+def product_has_invalid_mapping(rxn: str) -> bool:
+    r, p = _reaction_mols(rxn)
+    if r is None or p is None:
+        return True
+
+    r_map_counts: dict[int, int] = {}
+    for atom in r.GetAtoms():
+        map_num = atom.GetAtomMapNum()
+        if map_num > 0:
+            r_map_counts[map_num] = r_map_counts.get(map_num, 0) + 1
+
     pmaps = [atom.GetAtomMapNum() for atom in p.GetAtoms()]
-    return 0 in pmaps or sum([m not in rmaps for m in pmaps]) > 0
+    return (
+        0 in pmaps
+        or len(pmaps) != len(set(pmaps))
+        or any(r_map_counts.get(map_num, 0) != 1 for map_num in pmaps)
+    )
+
+
+def product_is_unmapped(rxn):
+    return product_has_invalid_mapping(rxn)
+
+
+def _mapped_product_maps(p: Chem.Mol) -> set[int]:
+    return {atom.GetAtomMapNum() for atom in p.GetAtoms() if atom.GetAtomMapNum() > 0}
+
+
+def _morgan_fp(mol: Chem.Mol):
+    try:
+        Chem.GetSymmSSSR(mol)
+        return AllChem.GetMorganFingerprintAsBitVect(mol, 2, nBits=2048)
+    except Exception:
+        try:
+            mol = Chem.Mol(mol)
+            Chem.SanitizeMol(mol)
+            return AllChem.GetMorganFingerprintAsBitVect(mol, 2, nBits=2048)
+        except Exception:
+            return None
+
+
+@lru_cache(maxsize=100_000)
+def has_confusing_reagent(rxn: str, tanimoto_threshold: float = 0.5) -> bool:
+    r, p = _reaction_mols(rxn)
+    if r is None or p is None:
+        return True
+
+    product_maps = _mapped_product_maps(p)
+    product_fp = _morgan_fp(p)
+    if product_fp is None:
+        return True
+
+    try:
+        reactants = Chem.GetMolFrags(r, asMols=True, sanitizeFrags=True)
+    except Exception:
+        reactants = Chem.GetMolFrags(r, asMols=True, sanitizeFrags=False)
+    for reactant in reactants:
+        reactant_maps = {
+            atom.GetAtomMapNum()
+            for atom in reactant.GetAtoms()
+            if atom.GetAtomMapNum() > 0
+        }
+        if reactant_maps & product_maps:
+            continue
+        reactant_fp = _morgan_fp(reactant)
+        if reactant_fp is None:
+            continue
+        if DataStructs.TanimotoSimilarity(reactant_fp, product_fp) >= tanimoto_threshold:
+            return True
+    return False
+
+
+@lru_cache(maxsize=100_000)
+def reaction_passes_paper_filters(rxn: str) -> bool:
+    if product_has_invalid_mapping(rxn):
+        return False
+    if os.environ.get("LOCALMAPPER_CONFUSING_REAGENT_FILTER", "0") != "1":
+        return True
+    return not has_confusing_reagent(rxn)
 
 
 def get_mapping_label(rxn):
     rsmi, psmi = rxn.split(">>")
     rmol = Chem.MolFromSmiles(rsmi)
     pmol = Chem.MolFromSmiles(psmi)
-    r_atom_dict = {atom.GetAtomMapNum(): atom.GetIdx() for atom in rmol.GetAtoms()}
+    if rmol is None or pmol is None or product_has_invalid_mapping(rxn):
+        return None
+    r_atom_dict = {
+        atom.GetAtomMapNum(): atom.GetIdx()
+        for atom in rmol.GetAtoms()
+        if atom.GetAtomMapNum() > 0
+    }
     labels = []
     for atom in pmol.GetAtoms():
         map_num = atom.GetAtomMapNum()
@@ -75,6 +172,47 @@ def canonicalize_map_rxn(rxn):
             smi = Chem.MolToSmiles(mol_cano, canonical=False)
         new_rxn.append(smi)
     return ">>".join(new_rxn)
+
+
+def _load_cgr_smiles_reader():
+    try:
+        from CGRtools import SMILESRead
+
+        return SMILESRead
+    except Exception:
+        try:
+            from CGRtools.files import SMILESRead
+
+            return SMILESRead
+        except Exception:
+            return None
+
+
+def cgrtools_available() -> bool:
+    return _load_cgr_smiles_reader() is not None
+
+
+def mapping_comparison_backend() -> str:
+    return "cgrtools" if cgrtools_available() else "canonical_signature"
+
+
+@lru_cache(maxsize=100_000)
+def cgr_signature(rxn: str) -> str | None:
+    smiles_read = _load_cgr_smiles_reader()
+    if smiles_read is None:
+        return None
+
+    try:
+        with tempfile.NamedTemporaryFile("w+", suffix=".smi") as handle:
+            handle.write(rxn)
+            handle.write("\n")
+            handle.flush()
+            with smiles_read(handle.name) as reader:
+                reaction = next(iter(reader))
+        cgr = reaction.compose()
+        return str(cgr)
+    except Exception:
+        return None
 
 
 def mapping_signature(rxn: str) -> tuple[tuple[str, str], tuple[tuple[int, int], ...]] | None:
@@ -113,19 +251,25 @@ def mapping_signature(rxn: str) -> tuple[tuple[str, str], tuple[tuple[int, int],
 
 
 def mappings_are_equivalent(predicted_rxn: str, reference_rxn: str) -> bool:
+    predicted_cgr = cgr_signature(predicted_rxn)
+    reference_cgr = cgr_signature(reference_rxn)
+    if predicted_cgr is not None and reference_cgr is not None:
+        return predicted_cgr == reference_cgr
+
     predicted = mapping_signature(predicted_rxn)
     reference = mapping_signature(reference_rxn)
     return predicted is not None and predicted == reference
 
 
 def mapping_matches_any(predicted_rxn: str, reference_rxns: list[str]) -> bool:
-    predicted = mapping_signature(predicted_rxn)
-    if predicted is None:
-        return False
-    return any(predicted == mapping_signature(reference) for reference in reference_rxns)
+    return any(mappings_are_equivalent(predicted_rxn, reference) for reference in reference_rxns)
 
 
 def normalize_mapped_rxn(rxn: str) -> str | None:
+    if get_mapping_label(rxn) is None or not reaction_passes_paper_filters(rxn):
+        return None
+    if os.environ.get("LOCALMAPPER_CANONICALIZE_TARGETS", "0") != "1":
+        return rxn
     try:
         normalized = canonicalize_map_rxn(rxn)
     except Exception:
@@ -344,32 +488,85 @@ def create_reaction_dataset(
         data_root=data_root,
         include_labels=include_labels,
     )
-    dataset_obj.items = [item for item in dataset_obj.items if item_has_valid_mapping(item)]
     return dataset_obj
 
 
 def normalize_item_target(item: dict[str, Any]) -> dict[str, Any] | None:
     reference_rxns = item.get("mapped_rxns", [item["rxn"]])
-    normalized_rxn = next(
-        (
-            normalized
-            for reference_rxn in reference_rxns
-            if (normalized := normalize_mapped_rxn(reference_rxn))
-        ),
-        None,
-    )
-    if normalized_rxn is None:
+    normalized_rxns = [
+        normalized
+        for reference_rxn in reference_rxns
+        if (normalized := normalize_mapped_rxn(reference_rxn))
+    ]
+    if not normalized_rxns:
         return None
-    return {**item, "rxn": normalized_rxn}
+    return {
+        **item,
+        "rxn": normalized_rxns[0],
+        "mapped_rxns": normalized_rxns,
+        "num_mappings": len(normalized_rxns),
+    }
 
 
-def normalize_item_targets(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [item for item in (normalize_item_target(item) for item in items) if item]
+class FilterTimeoutError(TimeoutError):
+    pass
+
+
+def _handle_filter_timeout(signum, frame):
+    raise FilterTimeoutError
+
+
+def _filter_timeout_seconds() -> float:
+    try:
+        return float(os.environ.get("LOCALMAPPER_FILTER_TIMEOUT_SECONDS", "5"))
+    except ValueError:
+        return 5.0
+
+
+def normalize_item_target_with_timeout(item: dict[str, Any]) -> dict[str, Any] | None:
+    timeout = _filter_timeout_seconds()
+    if timeout <= 0 or threading.current_thread() is not threading.main_thread():
+        return normalize_item_target(item)
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, _handle_filter_timeout)
+    signal.setitimer(signal.ITIMER_REAL, timeout)
+    try:
+        return normalize_item_target(item)
+    except FilterTimeoutError:
+        return None
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous_handler)
+
+
+def _progress(iterable, *, desc: str, total: int | None = None):
+    if tqdm is None or os.environ.get("LOCALMAPPER_PROGRESS", "1") == "0":
+        return iterable
+    return tqdm(iterable, desc=desc, total=total)
+
+
+def normalize_item_targets(
+    items: list[dict[str, Any]],
+    *,
+    progress_desc: str | None = None,
+) -> list[dict[str, Any]]:
+    iterator = (
+        _progress(items, desc=progress_desc, total=len(items))
+        if progress_desc
+        else items
+    )
+    return [
+        normalized
+        for item in iterator
+        if (normalized := normalize_item_target_with_timeout(item)) is not None
+    ]
 
 
 def item_has_valid_mapping(item: dict[str, Any]) -> bool:
     return any(
         get_mapping_label(reference_rxn) is not None
+        and reaction_passes_paper_filters(reference_rxn)
         for reference_rxn in item.get("mapped_rxns", [item["rxn"]])
     )
 
@@ -381,11 +578,15 @@ def select_split(
     seed: int = 0,
     val_fraction: float = 0.1,
     test_fraction: float = 0.1,
+    max_candidates: int | None = None,
 ) -> list[dict[str, Any]]:
     split = split.lower()
     explicit = [item for item in items if item["split"] == split]
     if explicit:
-        return normalize_item_targets(explicit)
+        return normalize_item_targets(
+            explicit,
+            progress_desc=f"Filtering {split} mappings",
+        )
 
     unsplit = [item for item in items if item["split"] is None]
     if not unsplit:
@@ -403,7 +604,13 @@ def select_split(
         item_split = "test" if i in test_ids else "val" if i in val_ids else "train"
         if item_split == split:
             selected.append({**item, "split": item_split})
-    return normalize_item_targets(selected)
+    if max_candidates is not None and len(selected) > max_candidates:
+        selected_order = rng.permutation(len(selected))[:max_candidates]
+        selected = [selected[i] for i in selected_order]
+    return normalize_item_targets(
+        selected,
+        progress_desc=f"Filtering {split} mappings",
+    )
 
 
 def load_dataset_items(
@@ -412,8 +619,7 @@ def load_dataset_items(
     data_root: str | Path = "data",
 ) -> list[dict[str, Any]]:
     # For code that only needs the reaction list, not graph construction.
-    items = create_reaction_dataset(dataset, lambda mol: mol, data_root=data_root).items
-    return [item for item in items if item_has_valid_mapping(item)]
+    return create_reaction_dataset(dataset, lambda mol: mol, data_root=data_root).items
 
 
 def load_reactions(
@@ -424,6 +630,7 @@ def load_reactions(
     seed: int = 0,
     val_fraction: float = 0.1,
     test_fraction: float = 0.1,
+    max_candidates: int | None = None,
 ) -> list[dict[str, Any]]:
     return select_split(
         load_dataset_items(dataset, data_root=data_root),
@@ -431,6 +638,7 @@ def load_reactions(
         seed=seed,
         val_fraction=val_fraction,
         test_fraction=test_fraction,
+        max_candidates=max_candidates,
     )
 
 

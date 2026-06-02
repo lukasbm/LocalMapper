@@ -7,7 +7,12 @@ import numpy as np
 import pandas as pd
 
 from .LocalTemplate.template_extractor import extract_from_reaction
-from .dataset import load_reactions, mkdir_p
+from .dataset import load_reactions, mkdir_p, reaction_passes_paper_filters
+
+from tqdm import tqdm
+
+ANNOTATION_WEIGHT = 100.0
+PSEUDO_TEMPLATE_TOTAL_WEIGHT = 100.0
 
 
 def run_name(model_name: str, seed: int) -> str:
@@ -68,11 +73,31 @@ def template_library_path(
     )
 
 
+def rejected_template_library_path(
+    root: str | Path,
+    dataset: str,
+    model_name: str,
+    seed: int,
+    split: str,
+    iteration: int,
+) -> Path:
+    return (
+        templates_dir(root, dataset, model_name, seed)
+        / f"rejected_templates_{split}_{iteration}.csv"
+    )
+
+
 def template_for(rxn: str) -> str | None:
     try:
         return extract_from_reaction(rxn)
     except Exception:
         return None
+
+
+def _progress(iterable, *, desc: str):
+    if tqdm is None:
+        return iterable
+    return tqdm(iterable, desc=desc)
 
 
 def load_dataset_split(
@@ -83,6 +108,7 @@ def load_dataset_split(
     seed: int,
     val_fraction: float,
     test_fraction: float,
+    max_candidates: int | None = None,
 ) -> list[dict[str, Any]]:
     return load_reactions(
         dataset,
@@ -91,6 +117,7 @@ def load_dataset_split(
         seed=seed,
         val_fraction=val_fraction,
         test_fraction=test_fraction,
+        max_candidates=max_candidates,
     )
 
 
@@ -124,13 +151,58 @@ def verified_templates(
     return set(annotations["template"].dropna().astype(str))
 
 
+def _valid_template_values(values) -> set[str]:
+    return {
+        str(value)
+        for value in values
+        if not pd.isna(value) and str(value).strip() and str(value) != "<NA>"
+    }
+
+
+def predicted_templates(
+    root: str | Path,
+    dataset: str,
+    model_name: str,
+    seed: int,
+    split: str,
+    through_iteration: int,
+) -> set[str]:
+    templates: set[str] = set()
+    for iteration in range(1, through_iteration + 1):
+        path = prediction_path(root, dataset, model_name, seed, split, iteration)
+        if not path.exists():
+            continue
+        predictions = pd.read_csv(path, usecols=lambda col: col == "template")
+        if "template" in predictions:
+            templates.update(_valid_template_values(predictions["template"]))
+    return templates
+
+
+def rejected_templates(
+    root: str | Path,
+    dataset: str,
+    model_name: str,
+    seed: int,
+    split: str,
+    through_prediction_iteration: int,
+    through_annotation_iteration: int,
+) -> set[str]:
+    if through_prediction_iteration <= 0:
+        return set()
+    known = verified_templates(
+        root, dataset, model_name, seed, through_annotation_iteration
+    )
+    return predicted_templates(
+        root, dataset, model_name, seed, split, through_prediction_iteration
+    ) - known
+
+
 def _item_frame(items: list[dict[str, Any]]) -> pd.DataFrame:
     return pd.DataFrame(
         {
             "data_idx": [item["id"] for item in items],
             "split": [item["split"] for item in items],
             "mapped_rxn": [item["rxn"] for item in items],
-            "template": [template_for(item["rxn"]) for item in items],
             "source": [item["source"] for item in items],
             "num_mappings": [item["num_mappings"] for item in items],
         }
@@ -149,15 +221,19 @@ def sample_annotations(
     data_root: str | Path,
     val_fraction: float,
     test_fraction: float,
+    items: list[dict[str, Any]] | None = None,
+    max_candidates: int | None = None,
 ) -> pd.DataFrame:
-    items = load_dataset_split(
-        dataset,
-        split,
-        data_root=data_root,
-        seed=seed,
-        val_fraction=val_fraction,
-        test_fraction=test_fraction,
-    )
+    if items is None:
+        items = load_dataset_split(
+            dataset,
+            split,
+            data_root=data_root,
+            seed=seed,
+            val_fraction=val_fraction,
+            test_fraction=test_fraction,
+            max_candidates=max_candidates,
+        )
     all_items = _item_frame(items)
     if all_items.empty:
         return all_items
@@ -187,14 +263,23 @@ def sample_annotations(
         known_templates = verified_templates(
             root, dataset, model_name, seed, iteration - 1
         )
-        if pred_path.exists() and known_templates:
+        rejected = rejected_templates(
+            root,
+            dataset,
+            model_name,
+            seed,
+            split,
+            through_prediction_iteration=iteration - 2,
+            through_annotation_iteration=iteration - 1,
+        )
+        if pred_path.exists():
             predictions = pd.read_csv(pred_path, dtype={"data_idx": str})
             predictions = predictions[
                 predictions["data_idx"].isin(set(available["data_idx"].astype(str)))
             ].copy()
             predictions["template"] = predictions["template"].astype("string")
             uncertain = predictions[
-                ~predictions["template"].fillna("").isin(known_templates)
+                ~predictions["template"].fillna("").isin(known_templates | rejected)
             ].copy()
             if not uncertain.empty:
                 groups = uncertain.groupby("template", dropna=False)
@@ -233,6 +318,10 @@ def sample_annotations(
     selected["_order"] = selected["data_idx"].astype(str).map(order)
     selected = selected.sort_values("_order").drop(columns=["_order"])
     selected.insert(0, "iteration", iteration)
+    selected["template"] = [
+        template_for(rxn)
+        for rxn in _progress(selected["mapped_rxn"], desc="Extracting annotation templates")
+    ]
     selected["selection_reason"] = [
         selection_reasons.get(str(data_idx), "random")
         for data_idx in selected["data_idx"]
@@ -240,6 +329,17 @@ def sample_annotations(
     selected["predicted_template"] = [
         predicted_templates.get(str(data_idx)) for data_idx in selected["data_idx"]
     ]
+    selected["rejected_template_memory_size"] = len(
+        rejected_templates(
+            root,
+            dataset,
+            model_name,
+            seed,
+            split,
+            through_prediction_iteration=iteration - 1,
+            through_annotation_iteration=iteration,
+        )
+    )
     return selected
 
 
@@ -284,6 +384,34 @@ def save_verified_template_library(
     return path
 
 
+def save_rejected_template_library(
+    root: str | Path,
+    dataset: str,
+    model_name: str,
+    seed: int,
+    split: str,
+    through_prediction_iteration: int,
+    through_annotation_iteration: int,
+) -> Path:
+    rejected = sorted(
+        rejected_templates(
+            root,
+            dataset,
+            model_name,
+            seed,
+            split,
+            through_prediction_iteration=through_prediction_iteration,
+            through_annotation_iteration=through_annotation_iteration,
+        )
+    )
+    path = rejected_template_library_path(
+        root, dataset, model_name, seed, split, through_annotation_iteration
+    )
+    mkdir_p(path.parent)
+    pd.DataFrame({"template": rejected}).to_csv(path, index=False)
+    return path
+
+
 def training_items_from_annotations(
     root: str | Path,
     dataset: str,
@@ -302,7 +430,8 @@ def training_items_from_annotations(
             "split": row.get("split"),
             "source": row.get("source"),
             "num_mappings": row.get("num_mappings", 1),
-            "weight": 1.0,
+            "weight": ANNOTATION_WEIGHT,
+            "train_split": "train",
             "label_source": "annotation",
         }
         for _, row in annotations.iterrows()
@@ -341,6 +470,12 @@ def confident_pseudo_items(
         predictions["template"].fillna("").isin(known_templates)
         & ~predictions["data_idx"].astype(str).isin(annotated_ids)
     ].copy()
+    if "invalid_mapping" in predictions:
+        invalid = predictions["invalid_mapping"].astype(str).str.lower()
+        predictions = predictions[~invalid.isin({"true", "1", "yes"})].copy()
+    predictions = predictions[
+        predictions["mapped_rxn"].map(reaction_passes_paper_filters)
+    ].copy()
     if predictions.empty:
         return []
 
@@ -348,7 +483,19 @@ def confident_pseudo_items(
     rng = np.random.default_rng(seed + 10_000 + iteration)
     for _, group in predictions.groupby("template"):
         n = min(per_template, len(group))
-        sampled.append(group.sample(n=n, random_state=int(rng.integers(0, 2**31 - 1))))
+        chosen = group.sample(n=n, random_state=int(rng.integers(0, 2**31 - 1))).copy()
+        if len(group) <= per_template:
+            chosen["weight"] = PSEUDO_TEMPLATE_TOTAL_WEIGHT / max(len(chosen), 1)
+            chosen["train_split"] = "train"
+        else:
+            chosen["weight"] = 1.0
+            chosen["train_split"] = "train"
+            n_val = max(1, int(round(len(chosen) * 0.1)))
+            val_indices = chosen.sample(
+                n=n_val, random_state=int(rng.integers(0, 2**31 - 1))
+            ).index
+            chosen.loc[val_indices, "train_split"] = "val"
+        sampled.append(chosen)
     pseudo = pd.concat(sampled, ignore_index=True) if sampled else pd.DataFrame()
     return [
         {
@@ -357,7 +504,8 @@ def confident_pseudo_items(
             "split": row.get("split", split),
             "source": row.get("source"),
             "num_mappings": row.get("num_mappings", 1),
-            "weight": 1.0,
+            "weight": float(row["weight"]),
+            "train_split": row["train_split"],
             "label_source": "confident_prediction",
         }
         for _, row in pseudo.iterrows()

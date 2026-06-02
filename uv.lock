@@ -3,6 +3,53 @@ revision = 3
 requires-python = ">=3.11"
 
 [[package]]
+name = "cachedmethods"
+version = "0.1.4"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e1/48/c134ce3453c970b79cdb165424624991ce5d0708f8d73bc884a0b21fc183/CachedMethods-0.1.4-py3-none-any.whl", hash = "sha256:e00f9734d4699ddd65ed39e6a4887e38d63a521e4a02fa1406e71b9cfa851438", size = 4046, upload-time = "2019-10-18T18:50:55.434Z" },
+]
+
+[[package]]
+name = "cgrtools-plus"
+version = "4.1.35"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cachedmethods" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/96/32/0102e0c063abc34838bdb3d257a4824e09476842ac0f7e154a462e83232a/cgrtools_plus-4.1.35.tar.gz", hash = "sha256:b4be5c278e7ad5283209d63b034448003ee863a45afc5d6514d607d2d4403bd9", size = 1027156, upload-time = "2025-11-25T21:16:39.782Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/09/f2/acb8cdd5fb784635c19f2643afee1e98b64777441f458dfcdea28ad32ba6/cgrtools_plus-4.1.35-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:1f444efc956d13850beda9884ce2d6ecd2ed699165b79568b202ea9d8e847b2a", size = 291135, upload-time = "2025-11-25T21:15:59.771Z" },
+    { url = "https://files.pythonhosted.org/packages/3e/b3/8a962624e46ababbb0a38c10d144baf5996603ba0d731b853f5d1f87147c/cgrtools_plus-4.1.35-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:dd8fa450fe8075f4ad538e80ced1f0412c5bdddd634853152869dbf2bbe6587b", size = 292039, upload-time = "2025-11-25T21:16:00.944Z" },
+    { url = "https://files.pythonhosted.org/packages/a2/66/b17c89aa94f1569367c57c1a30fef2c594b196acc0d127621408a2333557/cgrtools_plus-4.1.35-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:d54ecbedc7c81d873e314d5e15c1a5e07cabdf7ad796df2234c6d0e9e8830091", size = 425264, upload-time = "2025-11-25T21:16:02.194Z" },
+    { url = "https://files.pythonhosted.org/packages/2f/d7/a1e87fba0072be56967ab2a1d44187d56dc048a393a4189b1c59083de23c/cgrtools_plus-4.1.35-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:aaa558cd35808898f933da87bccbf7a629f332cd2642c6ea3fb7f629fe9336a3", size = 1081307, upload-time = "2025-11-25T21:16:03.451Z" },
+    { url = "https://files.pythonhosted.org/packages/16/ac/e7751b92cbe9168d6ace259d85c07d77e2113e80f2f8220951c210f93f73/cgrtools_plus-4.1.35-cp311-cp311-win32.whl", hash = "sha256:4bccb25494f506c8e13ad409fe2cd1a29bfa0e9381766b4178d06c1721ac1271", size = 928136, upload-time = "2025-11-25T21:16:04.789Z" },
+    { url = "https://files.pythonhosted.org/packages/e7/65/10effa90dfe62722792edd49b9e48bf2531f3829e96094fe86d9b5a60fa9/cgrtools_plus-4.1.35-cp311-cp311-win_amd64.whl", hash = "sha256:241140ddaeb3e58a3cac1cf58ebd07bfbf8643684fb4e756f4e00460c4c3a266", size = 930921, upload-time = "2025-11-25T21:16:06.162Z" },
+    { url = "https://files.pythonhosted.org/packages/06/23/fb6ca253b6eb9885a931da1721897b5037802f07211f531e94c27227679c/cgrtools_plus-4.1.35-cp311-cp311-win_arm64.whl", hash = "sha256:e893f3c1267db4ce60633eaa8817bd555a4e32d3a8d5fc12068a84be5feb0377", size = 286168, upload-time = "2025-11-25T21:16:07.807Z" },
+    { url = "https://files.pythonhosted.org/packages/4d/47/be76e6488f854e1a40ea9e280bc3104df98641661163d19ad81b78002ffd/cgrtools_plus-4.1.35-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:b02fcc202c2d046e60112833edb82727a87ac4b10912ddf77ab001fc57a6a57a", size = 291026, upload-time = "2025-11-25T21:16:09.033Z" },
+    { url = "https://files.pythonhosted.org/packages/04/0c/f912ff5cfca52b55c33e72eb52d83a4513f3570f9a89ba09bf78458075ec/cgrtools_plus-4.1.35-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:09b9fde935b7c8eeb7264a76e7d744b43bbe1e6c9ab3aec09fb5eadf50adc356", size = 291229, upload-time = "2025-11-25T21:16:10.936Z" },
+    { url = "https://files.pythonhosted.org/packages/e7/44/3ba96ec78f1da0aa0570e084685e755e22571da9609dd84543daf720b616/cgrtools_plus-4.1.35-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:38d3971f5fd451e21f6b4b249da426053ba5a3568fb27f14f88d059bc559f1f1", size = 429027, upload-time = "2025-11-25T21:16:13.137Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/a7/648934ce6ba2426a837506810b92fa759b2f9f8593ba22f8bff284e012cc/cgrtools_plus-4.1.35-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:468fe4e1508c1973fbbfcfbf0c64ec81a21792379fc7c1cfd4ab0a70ced78bf8", size = 1084661, upload-time = "2025-11-25T21:16:14.96Z" },
+    { url = "https://files.pythonhosted.org/packages/e8/54/c98c1abefd60a9272f780722690f5786dfed5729220909d8cef8f6c2472f/cgrtools_plus-4.1.35-cp312-cp312-win32.whl", hash = "sha256:f7eb5a395b27dd9d5d23d9787b73f8c08d14d4c9bba3e30b3e715a05acd38a4e", size = 928583, upload-time = "2025-11-25T21:16:16.525Z" },
+    { url = "https://files.pythonhosted.org/packages/7d/b3/0a849424a599609a8a8ba1b7be9e65b9754b627e9fb58f0d9954002b25e3/cgrtools_plus-4.1.35-cp312-cp312-win_amd64.whl", hash = "sha256:d73c23432d2915abb30bfb64b6189399141e2955a560060aba6ddfdb3a28a3b7", size = 931780, upload-time = "2025-11-25T21:16:17.776Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/68/c61b684fce25f680fd9edf07d3abf9ec98922706c2276d786683ac3fe22c/cgrtools_plus-4.1.35-cp312-cp312-win_arm64.whl", hash = "sha256:8057ad16fc5d739154036784e5a13b3fa00a0c7507c9914481b023f5382dbe15", size = 286522, upload-time = "2025-11-25T21:16:18.998Z" },
+    { url = "https://files.pythonhosted.org/packages/32/0d/856e45e8fab03f9fb054fbb575c280da4307a6aa241fcdff7038e9ee7b6b/cgrtools_plus-4.1.35-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:1aeef6c527fe8b6c0b2d5abddc1b06690740ca656ebb4fd0421cc37b2f17ab1e", size = 290706, upload-time = "2025-11-25T21:16:20.555Z" },
+    { url = "https://files.pythonhosted.org/packages/86/90/08f7f26e3be65a01584e27bd1e19fe53b1bf68ae499f8723d3bd3af44a53/cgrtools_plus-4.1.35-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:b0762d3f6ec53a2a7b8ce2580024476aae979884045ab9c1838d327b8a465d2a", size = 290817, upload-time = "2025-11-25T21:16:21.784Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/e7/f5572610d9362f2911678ad09ed98e813f52455f5a1687bceaa019a5125d/cgrtools_plus-4.1.35-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:1df1337a8f0e7f9df8dfe63ea6b71bdbc163a31547014e60b0ecdf35aecf02e9", size = 423729, upload-time = "2025-11-25T21:16:22.913Z" },
+    { url = "https://files.pythonhosted.org/packages/59/f5/904ef2af2b787ac3ae0200a8252e88c741f8b5612566f6c57fa4a9571549/cgrtools_plus-4.1.35-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:8f8507846ddd30da30b84c35a1d3b6769daea5a88655318a04102f22c65e0b82", size = 1080317, upload-time = "2025-11-25T21:16:24.354Z" },
+    { url = "https://files.pythonhosted.org/packages/72/ea/c1a1923ad2a65914b87f840c4c217316590ad5702af7b23dda381de66634/cgrtools_plus-4.1.35-cp313-cp313-win32.whl", hash = "sha256:20a73125e0b633ceed309d6d6867ca7b59ed2cf80a47821cc0a1b47fa4e3301e", size = 928364, upload-time = "2025-11-25T21:16:25.982Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/e4/28c0eb9e2ff0c2c7dbfd80d6cbaeacd808534b9f84e332d19335bc9df0ee/cgrtools_plus-4.1.35-cp313-cp313-win_amd64.whl", hash = "sha256:b61be83e6e1edc7ad7bfbf1f4c9c6768c492d2272c6169c922f1655ab59e25e7", size = 931087, upload-time = "2025-11-25T21:16:27.762Z" },
+    { url = "https://files.pythonhosted.org/packages/f8/b0/85842667a9f1f15f91d7ec099770f51199bed66873ebd61ec28902247110/cgrtools_plus-4.1.35-cp313-cp313-win_arm64.whl", hash = "sha256:5acb883add3750d808f20f284427c160ff6a0e51a7a74637e577d47f2161f85f", size = 286166, upload-time = "2025-11-25T21:16:29.192Z" },
+    { url = "https://files.pythonhosted.org/packages/6c/1b/933a00c5168f9b775a6b05a6e657341f975090f83b632273f03761710ec0/cgrtools_plus-4.1.35-cp314-cp314-macosx_10_15_x86_64.whl", hash = "sha256:0efbfea2aeebd448747fe25ba1bc17de231ce87fa0af5d389a10df804af90073", size = 290541, upload-time = "2025-11-25T21:16:30.399Z" },
+    { url = "https://files.pythonhosted.org/packages/68/5d/42c318108e3bfa1bba38d14630a9bf2660c9a0cffe5ab4ac8118b85fe34e/cgrtools_plus-4.1.35-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:1fe96d8eb9bf068cd2e358488680b3bc1c3ff6a6450fd2b2118b0ae20c26516a", size = 290731, upload-time = "2025-11-25T21:16:31.564Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/95/12fa65aca942dadf74999b096e973d2870172312d977d068049e33f7dd3a/cgrtools_plus-4.1.35-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:044c2a0ed88044f11810065f280a4e22cd172b9f422133c5f9a36e10da0240ea", size = 423209, upload-time = "2025-11-25T21:16:32.776Z" },
+    { url = "https://files.pythonhosted.org/packages/33/bf/542644df071bcef1aa807e1b41f7a4706a5905a171e3f508517d915f6452/cgrtools_plus-4.1.35-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:3a0f0b49387132ca95b0b5f41a5cb029e6ba73f27a9bf358d674e412eb495fba", size = 1078821, upload-time = "2025-11-25T21:16:34.235Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/8f/154aa99173fd9887bb3ed079e28972884652187c64e93a4e1e42fe5074d5/cgrtools_plus-4.1.35-cp314-cp314-win32.whl", hash = "sha256:006224997c4ada8a1cb7f02cfe1d534848e3b67d572c56fb2c8ea62efd7fa9d0", size = 945313, upload-time = "2025-11-25T21:16:35.599Z" },
+    { url = "https://files.pythonhosted.org/packages/89/c2/be51a8c94c6a399903f78f3bcb5c00e025b52f71b4a752fb31f89d007f7f/cgrtools_plus-4.1.35-cp314-cp314-win_amd64.whl", hash = "sha256:2cf72b91fbe7624a07c6e9b00c28996e7b12141f14a2cc658b65a2a510a4ae47", size = 948057, upload-time = "2025-11-25T21:16:37.286Z" },
+    { url = "https://files.pythonhosted.org/packages/72/d6/44f3de85101456af10d1cb9215542da981358392498483e7972e5da196d0/cgrtools_plus-4.1.35-cp314-cp314-win_arm64.whl", hash = "sha256:2d7ef213541d56fdc4e5e7d0fecf6898a432aa9f42e728f5ba8f316cc8dfbd54", size = 286748, upload-time = "2025-11-25T21:16:38.506Z" },
+]
+
+[[package]]
 name = "cuda-bindings"
 version = "13.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -117,12 +164,14 @@ name = "localmapper"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "cgrtools-plus" },
     { name = "fire" },
     { name = "torch" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "cgrtools-plus", specifier = ">=4.1.35" },
     { name = "fire", specifier = ">=0.7.0" },
     { name = "torch", specifier = ">=2.12.0" },
 ]

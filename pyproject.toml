@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "cgrtools-plus>=4.1.35",
     "fire>=0.7.0",
     "torch>=2.12.0",
 ]
