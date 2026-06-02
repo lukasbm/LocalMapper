@@ -12,6 +12,7 @@ import torch
 
 from localmapper.active_learning import (
     checkpoint_path,
+    output_dir,
     prediction_path,
     verified_templates,
 )
@@ -89,18 +90,34 @@ def write_predictions(
                         "num_mappings": item["num_mappings"],
                     }
                 )
+    y_true = np.asarray(correctness_labels, dtype=bool)
+    y_score = np.asarray(mapping_scores, dtype=float)
+    score_calibration = _compute_score_calibration(y_true, y_score)
+    score_uncalibrated = _compute_score_threshold_metrics(
+        y_true,
+        y_score,
+        threshold=0.5,
+        threshold_source="fixed_0.5",
+    )
+    calibrated_threshold = score_calibration["threshold"]
+
     mkdir_p(Path(output_path).parent)
     df = pd.DataFrame(rows)
+    if not df.empty:
+        df["score_is_correct_calibrated"] = (
+            df["mapping_score"].astype(float) >= calibrated_threshold
+        )
+        df["score_is_correct_uncalibrated"] = (
+            df["mapping_score"].astype(float) >= score_uncalibrated["threshold"]
+        )
+        df["score_calibrated_threshold"] = calibrated_threshold
+        df["score_uncalibrated_threshold"] = score_uncalibrated["threshold"]
     df.to_csv(output_path, index=False)
 
-    score_calibration = _compute_score_calibration(
-        np.asarray(correctness_labels, dtype=bool),
-        np.asarray(mapping_scores, dtype=float),
-    )
     metrics = {
         "aam": {
             "equiv_exact_match_accuracy": (
-                float(np.asarray(correctness_labels, dtype=bool).mean())
+                float(y_true.mean())
                 if correctness_labels
                 else 0.0
             ),
@@ -117,8 +134,9 @@ def write_predictions(
             "equivalence_backend": mapping_comparison_backend(),
         },
         "score_calibration": score_calibration,
+        "score_uncalibrated": score_uncalibrated,
         "template_confidence": _compute_confidence_metrics(
-            np.asarray(correctness_labels, dtype=bool),
+            y_true,
             np.asarray(confidence_predictions, dtype=bool),
         ),
     }
@@ -228,6 +246,30 @@ def _compute_score_calibration(y_true, y_score):
     y_true = y_true.astype(bool)
     y_score = y_score.astype(float)
     threshold, y_pred = _best_threshold(y_true, y_score)
+    metrics = _compute_score_threshold_metrics(
+        y_true,
+        y_score,
+        threshold=threshold,
+        threshold_source="best_f1_on_evaluation",
+    )
+
+    order = np.argsort(-y_score)
+    sorted_true = y_true[order].astype(int)
+    positives = int(sorted_true.sum())
+    if positives == 0:
+        ap = 0.0
+    else:
+        cumulative_tp = np.cumsum(sorted_true)
+        precision_at_k = cumulative_tp / (np.arange(len(sorted_true)) + 1)
+        ap = float((precision_at_k * sorted_true).sum() / positives)
+    metrics["ap"] = float(ap)
+    return metrics
+
+
+def _compute_score_threshold_metrics(y_true, y_score, *, threshold, threshold_source):
+    y_true = y_true.astype(bool)
+    y_score = y_score.astype(float)
+    y_pred = y_score >= threshold
 
     tp = int(np.sum(y_true & y_pred))
     tn = int(np.sum(~y_true & ~y_pred))
@@ -244,23 +286,14 @@ def _compute_score_calibration(y_true, y_score):
     mcc_denom = float((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
     mcc = ((tp * tn) - (fp * fn)) / np.sqrt(mcc_denom) if mcc_denom else 0.0
 
-    order = np.argsort(-y_score)
-    sorted_true = y_true[order].astype(int)
-    positives = int(sorted_true.sum())
-    if positives == 0:
-        ap = 0.0
-    else:
-        cumulative_tp = np.cumsum(sorted_true)
-        precision_at_k = cumulative_tp / (np.arange(len(sorted_true)) + 1)
-        ap = float((precision_at_k * sorted_true).sum() / positives)
-
     return {
-        "ap": float(ap),
         "mcc": float(mcc),
         "accuracy": float(accuracy),
+        "precision": float(precision),
+        "recall": float(recall),
         "f1": float(f1),
         "threshold": float(threshold),
-        "threshold_source": "best_f1_on_evaluation",
+        "threshold_source": threshold_source,
         "confusion": {
             "tp": tp,
             "tn": tn,
@@ -300,6 +333,42 @@ def _best_threshold(y_true, y_score):
     threshold = float(sorted_scores[best_idx])
     y_pred = y_score >= threshold
     return threshold, y_pred
+
+
+def _flatten_metrics(prefix, value, out):
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            next_prefix = f"{prefix}.{key}" if prefix else key
+            _flatten_metrics(next_prefix, nested, out)
+    else:
+        out[prefix] = value
+
+
+def save_run_metrics_summary(run_dir):
+    run_dir = Path(run_dir)
+    predictions_dir = run_dir / "predictions"
+    rows = []
+    for metrics_path in sorted(predictions_dir.glob("metrics_*.json")):
+        parts = metrics_path.stem.split("_")
+        split = parts[1] if len(parts) >= 3 else None
+        iteration = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else None
+        with metrics_path.open() as handle:
+            metrics = json.load(handle)
+        row = {
+            "split": split,
+            "iteration": iteration,
+            "metrics_path": str(metrics_path),
+        }
+        _flatten_metrics("", metrics, row)
+        rows.append(row)
+
+    mkdir_p(run_dir)
+    summary_json = run_dir / "metrics_summary.json"
+    summary_csv = run_dir / "metrics_summary.csv"
+    with summary_json.open("w") as handle:
+        json.dump(rows, handle, indent=2, sort_keys=True)
+    pd.DataFrame(rows).to_csv(summary_csv, index=False)
+    return summary_json, summary_csv
 
 
 def main(
@@ -353,6 +422,9 @@ def main(
         test_loader,
         try_twice,
     )
+    summary_json, summary_csv = save_run_metrics_summary(
+        output_dir(ROOT, dataset, model, seed)
+    )
     print(
         "AAM {equivalence_backend} EquivExact: {equiv_exact_match_accuracy:.4f}, AtomAcc: {atom_accuracy:.4f}, RawExact: {raw_exact_match_accuracy:.4f}, Invalid: {invalid_mapping_count}/{total}".format(
             **metrics["aam"]
@@ -364,12 +436,18 @@ def main(
         )
     )
     print(
+        "Uncalibrated score@0.5: MCC: {mcc:.4f}, Accuracy: {accuracy:.4f}, F1: {f1:.4f}".format(
+            **metrics["score_uncalibrated"]
+        )
+    )
+    print(
         "Template confidence: Coverage: {coverage:.4f}, ConfAcc: {confident_accuracy:.4f}, UnconfAcc: {unconfident_accuracy:.4f}, MCC: {mcc:.4f}".format(
             **metrics["template_confidence"]
         )
     )
     print(f"Saved predictions to {output_path}")
     print(f"Saved metrics to {metrics_path}")
+    print(f"Saved run metrics summary to {summary_csv} and {summary_json}")
 
 
 if __name__ == "__main__":
