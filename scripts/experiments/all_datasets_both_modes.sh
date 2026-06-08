@@ -29,6 +29,7 @@ for DATASET_NAME in $DATASETS; do
     export SAMPLE_LIMIT="$(default_sample_limit "$DATASET_NAME")"
     export ITERATIONS="$(default_iterations "$DATASET_NAME")"
     export MODEL="LocalMapper_${MODE}_${DATASET_NAME}_${RUN_ID}"
+    export LOCALMAPPER_EQUIVALENCE_BACKEND=synkit_its
 
     echo "### Running DATASET=${DATASET} INIT_MODE=${INIT_MODE} MODEL=${MODEL} ###"
     "$SCRIPT_DIR/run_active_learning.sh"

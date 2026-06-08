@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import errno
+import atexit
+import multiprocessing as mp
 import os
+import queue
 import signal
 import threading
-import tempfile
+import time
+import traceback
+from io import StringIO
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -193,26 +198,61 @@ def cgrtools_available() -> bool:
 
 
 def mapping_comparison_backend() -> str:
-    return "cgrtools" if cgrtools_available() else "canonical_signature"
+    backend = _equivalence_backend()
+    if backend in {"synkit_its", "synkit_rc", "synkit_its_wl", "synkit_rc_wl"}:
+        return backend
+    if _use_isolated_cgrtools_comparison():
+        return "cgrtools_isolated"
+    if _use_cgrtools_comparison() and cgrtools_available():
+        return "cgrtools_direct"
+    return "canonical_signature"
 
 
-@lru_cache(maxsize=100_000)
-def cgr_signature(rxn: str) -> str | None:
+def _cgr_signature_direct(rxn: str) -> str | None:
+    if get_mapping_label(rxn) is None:
+        return None
+
     smiles_read = _load_cgr_smiles_reader()
     if smiles_read is None:
         return None
 
+    with smiles_read(
+        StringIO(f"{rxn}\n"),
+        ignore=_cgrtools_ignore_parser_errors(),
+        store_log=bool(_cgr_debug_path()),
+    ) as reader:
+        reaction = next(iter(reader))
+        if _cgr_debug_path():
+            parser_log = reaction.meta.get("CGRtoolsParserLog", "")
+            if parser_log:
+                _log_cgr_event("cgrtools_parser_log", rxn, detail=parser_log.replace("\n", " | "))
+    cgr = reaction.compose()
+    return str(cgr)
+
+
+@lru_cache(maxsize=100_000)
+def cgr_signature(rxn: str) -> str | None:
+    if not _use_cgrtools_comparison():
+        return None
+
+    if _use_isolated_cgrtools_comparison():
+        return _cgr_signature_isolated(rxn)
+
+    timeout = _cgr_timeout_seconds()
+    use_alarm = timeout > 0 and threading.current_thread() is threading.main_thread()
+    previous_handler = None
     try:
-        with tempfile.NamedTemporaryFile("w+", suffix=".smi") as handle:
-            handle.write(rxn)
-            handle.write("\n")
-            handle.flush()
-            with smiles_read(handle.name) as reader:
-                reaction = next(iter(reader))
-        cgr = reaction.compose()
-        return str(cgr)
+        if use_alarm:
+            previous_handler = signal.getsignal(signal.SIGALRM)
+            signal.signal(signal.SIGALRM, _handle_cgr_timeout)
+            signal.setitimer(signal.ITIMER_REAL, timeout)
+        return _cgr_signature_direct(rxn)
     except Exception:
         return None
+    finally:
+        if use_alarm:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, previous_handler)
 
 
 def mapping_signature(rxn: str) -> tuple[tuple[str, str], tuple[tuple[int, int], ...]] | None:
@@ -251,6 +291,20 @@ def mapping_signature(rxn: str) -> tuple[tuple[str, str], tuple[tuple[int, int],
 
 
 def mappings_are_equivalent(predicted_rxn: str, reference_rxn: str) -> bool:
+    backend = _equivalence_backend()
+    if backend in {"synkit_its_wl", "synkit_rc_wl"}:
+        check_method = backend.removeprefix("synkit_").removesuffix("_wl").upper()
+        predicted = synkit_mapping_fingerprint(predicted_rxn, check_method=check_method)
+        reference = synkit_mapping_fingerprint(reference_rxn, check_method=check_method)
+        return predicted is not None and predicted == reference
+
+    if backend in {"synkit_its", "synkit_rc"}:
+        return synkit_mapping_equivalent(
+            predicted_rxn,
+            reference_rxn,
+            check_method=backend.removeprefix("synkit_").upper(),
+        )
+
     predicted_cgr = cgr_signature(predicted_rxn)
     reference_cgr = cgr_signature(reference_rxn)
     if predicted_cgr is not None and reference_cgr is not None:
@@ -263,6 +317,65 @@ def mappings_are_equivalent(predicted_rxn: str, reference_rxn: str) -> bool:
 
 def mapping_matches_any(predicted_rxn: str, reference_rxns: list[str]) -> bool:
     return any(mappings_are_equivalent(predicted_rxn, reference) for reference in reference_rxns)
+
+
+@lru_cache(maxsize=100_000)
+def synkit_mapping_equivalent(
+    predicted_rxn: str,
+    reference_rxn: str,
+    *,
+    check_method: str = "ITS",
+) -> bool:
+    try:
+        from synkit.Chem.Reaction.aam_validator import AAMValidator
+
+        return bool(
+            AAMValidator.smiles_check(
+                predicted_rxn,
+                reference_rxn,
+                check_method=check_method,
+            )
+        )
+    except Exception:
+        return False
+
+
+@lru_cache(maxsize=100_000)
+def synkit_mapping_fingerprint(
+    rxn: str,
+    *,
+    check_method: str = "ITS",
+) -> str | None:
+    try:
+        import networkx as nx
+        from synkit.Graph.ITS.its_construction import ITSConstruction
+        from synkit.Graph.ITS.its_decompose import get_rc
+        from synkit.IO.chem_converter import rsmi_to_graph
+
+        reactant, product = rsmi_to_graph(
+            rsmi=rxn,
+            sanitize=True,
+            drop_non_aam=True,
+        )
+        graph = ITSConstruction().ITSGraph(reactant, product)
+        if check_method.upper() == "RC":
+            graph = get_rc(graph)
+
+        graph = graph.copy()
+        for _, attrs in graph.nodes(data=True):
+            attrs["_equivalence_label"] = repr(attrs.get("typesGH"))
+        for _, _, attrs in graph.edges(data=True):
+            attrs["_equivalence_label"] = repr(attrs.get("order"))
+
+        return nx.weisfeiler_lehman_graph_hash(
+            graph,
+            node_attr="_equivalence_label",
+            edge_attr="_equivalence_label",
+            iterations=8,
+            digest_size=32,
+        )
+    except Exception:
+        return None
 
 
 def normalize_mapped_rxn(rxn: str) -> str | None:
@@ -512,8 +625,16 @@ class FilterTimeoutError(TimeoutError):
     pass
 
 
+class CgrTimeoutError(TimeoutError):
+    pass
+
+
 def _handle_filter_timeout(signum, frame):
     raise FilterTimeoutError
+
+
+def _handle_cgr_timeout(signum, frame):
+    raise CgrTimeoutError
 
 
 def _filter_timeout_seconds() -> float:
@@ -521,6 +642,145 @@ def _filter_timeout_seconds() -> float:
         return float(os.environ.get("LOCALMAPPER_FILTER_TIMEOUT_SECONDS", "5"))
     except ValueError:
         return 5.0
+
+
+def _cgr_timeout_seconds() -> float:
+    try:
+        return float(os.environ.get("LOCALMAPPER_CGR_TIMEOUT_SECONDS", "2"))
+    except ValueError:
+        return 2.0
+
+
+def _cgr_debug_path() -> Path | None:
+    path = os.environ.get("LOCALMAPPER_CGR_DEBUG_PATH")
+    return Path(path) if path else None
+
+
+def _cgrtools_ignore_parser_errors() -> bool:
+    value = os.environ.get("LOCALMAPPER_CGRTOOLS_IGNORE", "1").lower()
+    return value not in {"0", "false", "off", "no"}
+
+
+def _log_cgr_event(event: str, rxn: str, *, detail: str = ""):
+    path = _cgr_debug_path()
+    if path is None:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a") as handle:
+            handle.write(f"{time.time():.6f}\t{event}\t{detail}\t{rxn}\n")
+    except Exception:
+        pass
+
+
+_CGR_ISOLATED_BACKENDS = {"cgrtools", "cgrtools_isolated", "cgrtools_safe"}
+_CGR_WORKER = None
+_CGR_TASK_QUEUE = None
+_CGR_RESULT_QUEUE = None
+_CGR_TASK_ID = 0
+
+
+def _equivalence_backend() -> str:
+    return os.environ.get(
+        "LOCALMAPPER_EQUIVALENCE_BACKEND", "synkit_its_wl"
+    ).lower()
+
+
+def _use_cgrtools_comparison() -> bool:
+    return _equivalence_backend() in {
+        "cgrtools",
+        "cgrtools_direct",
+        "cgrtools_isolated",
+        "cgrtools_safe",
+        "cgrtools_signal",
+    }
+
+
+def _use_isolated_cgrtools_comparison() -> bool:
+    return _equivalence_backend() in _CGR_ISOLATED_BACKENDS
+
+
+def _cgr_worker_loop(task_queue, result_queue):
+    while True:
+        task = task_queue.get()
+        if task is None:
+            return
+        task_id, rxn = task
+        try:
+            signature = _cgr_signature_direct(rxn)
+            error = ""
+        except Exception:
+            signature = None
+            error = traceback.format_exc(limit=1).strip().replace("\n", " | ")
+        result_queue.put((task_id, signature, error))
+
+
+def _stop_cgr_worker():
+    global _CGR_WORKER, _CGR_TASK_QUEUE, _CGR_RESULT_QUEUE
+    worker = _CGR_WORKER
+    if worker is not None and worker.is_alive():
+        try:
+            _CGR_TASK_QUEUE.put_nowait(None)
+            worker.join(timeout=0.2)
+        except Exception:
+            pass
+        if worker.is_alive():
+            worker.terminate()
+            worker.join(timeout=0.2)
+    _CGR_WORKER = None
+    _CGR_TASK_QUEUE = None
+    _CGR_RESULT_QUEUE = None
+
+
+def _ensure_cgr_worker():
+    global _CGR_WORKER, _CGR_TASK_QUEUE, _CGR_RESULT_QUEUE
+    if _CGR_WORKER is not None and _CGR_WORKER.is_alive():
+        return
+    _stop_cgr_worker()
+    context = mp.get_context(os.environ.get("LOCALMAPPER_CGR_MP_CONTEXT", "spawn"))
+    _CGR_TASK_QUEUE = context.Queue(maxsize=1)
+    _CGR_RESULT_QUEUE = context.Queue(maxsize=1)
+    _CGR_WORKER = context.Process(
+        target=_cgr_worker_loop,
+        args=(_CGR_TASK_QUEUE, _CGR_RESULT_QUEUE),
+        daemon=True,
+    )
+    _CGR_WORKER.start()
+
+
+def _cgr_signature_isolated(rxn: str) -> str | None:
+    global _CGR_TASK_ID
+    if threading.current_thread() is not threading.main_thread():
+        try:
+            return _cgr_signature_direct(rxn)
+        except Exception:
+            return None
+
+    timeout = _cgr_timeout_seconds()
+    if timeout <= 0:
+        try:
+            return _cgr_signature_direct(rxn)
+        except Exception:
+            return None
+
+    _ensure_cgr_worker()
+    _CGR_TASK_ID += 1
+    task_id = _CGR_TASK_ID
+    try:
+        _CGR_TASK_QUEUE.put((task_id, rxn), timeout=timeout)
+        while True:
+            result_id, signature, error = _CGR_RESULT_QUEUE.get(timeout=timeout)
+            if result_id == task_id:
+                if signature is None:
+                    _log_cgr_event("cgrtools_none", rxn, detail=error)
+                return signature
+    except (queue.Empty, queue.Full):
+        _log_cgr_event("cgrtools_timeout", rxn, detail=f"timeout={timeout}")
+        _stop_cgr_worker()
+        return None
+
+
+atexit.register(_stop_cgr_worker)
 
 
 def normalize_item_target_with_timeout(item: dict[str, Any]) -> dict[str, Any] | None:

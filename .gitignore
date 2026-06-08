@@ -131,4 +131,6 @@ dmypy.json
 data/
 output/
 outputs/
+output_old/
+outputs_old/
 
