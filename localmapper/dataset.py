@@ -170,9 +170,9 @@ def canonicalize_map_rxn(rxn):
         [atom.SetAtomMapNum(0) for atom in mol_cano.GetAtoms()]
         smi_cano = Chem.MolToSmiles(mol_cano)
         mol_cano = Chem.MolFromSmiles(smi_cano)
-        matches = mol.GetSubstructMatches(mol_cano)
-        if matches:
-            for atom, mat in zip(mol_cano.GetAtoms(), matches[0]):
+        match = mol.GetSubstructMatch(mol_cano)
+        if match:
+            for atom, mat in zip(mol_cano.GetAtoms(), match):
                 atom.SetAtomMapNum(index2mapnums[mat])
             smi = Chem.MolToSmiles(mol_cano, canonical=False)
         new_rxn.append(smi)
@@ -326,7 +326,14 @@ def synkit_mapping_equivalent(
     *,
     check_method: str = "ITS",
 ) -> bool:
+    timeout = _synkit_timeout_seconds()
+    use_alarm = timeout > 0 and threading.current_thread() is threading.main_thread()
+    previous_handler = None
     try:
+        if use_alarm:
+            previous_handler = signal.getsignal(signal.SIGALRM)
+            signal.signal(signal.SIGALRM, _handle_synkit_timeout)
+            signal.setitimer(signal.ITIMER_REAL, timeout)
         from synkit.Chem.Reaction.aam_validator import AAMValidator
 
         return bool(
@@ -338,6 +345,10 @@ def synkit_mapping_equivalent(
         )
     except Exception:
         return False
+    finally:
+        if use_alarm:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, previous_handler)
 
 
 @lru_cache(maxsize=100_000)
@@ -629,12 +640,20 @@ class CgrTimeoutError(TimeoutError):
     pass
 
 
+class SynKitTimeoutError(TimeoutError):
+    pass
+
+
 def _handle_filter_timeout(signum, frame):
     raise FilterTimeoutError
 
 
 def _handle_cgr_timeout(signum, frame):
     raise CgrTimeoutError
+
+
+def _handle_synkit_timeout(signum, frame):
+    raise SynKitTimeoutError
 
 
 def _filter_timeout_seconds() -> float:
@@ -647,6 +666,13 @@ def _filter_timeout_seconds() -> float:
 def _cgr_timeout_seconds() -> float:
     try:
         return float(os.environ.get("LOCALMAPPER_CGR_TIMEOUT_SECONDS", "2"))
+    except ValueError:
+        return 2.0
+
+
+def _synkit_timeout_seconds() -> float:
+    try:
+        return float(os.environ.get("LOCALMAPPER_SYNKIT_TIMEOUT_SECONDS", "2"))
     except ValueError:
         return 2.0
 
