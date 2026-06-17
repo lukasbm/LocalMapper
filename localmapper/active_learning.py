@@ -255,6 +255,7 @@ def sample_annotations(
     selected_ids: list[str] = []
     selection_reasons: dict[str, str] = {}
     predicted_templates: dict[str, str | None] = {}
+    previous_predictions_by_id: dict[str, dict[str, Any]] = {}
 
     if iteration > 1:
         pred_path = prediction_path(
@@ -277,6 +278,10 @@ def sample_annotations(
             predictions = predictions[
                 predictions["data_idx"].isin(set(available["data_idx"].astype(str)))
             ].copy()
+            previous_predictions_by_id = {
+                str(row["data_idx"]): row.to_dict()
+                for _, row in predictions.iterrows()
+            }
             predictions["template"] = predictions["template"].astype("string")
             uncertain = predictions[
                 ~predictions["template"].fillna("").isin(known_templates | rejected)
@@ -329,6 +334,15 @@ def sample_annotations(
     selected["predicted_template"] = [
         predicted_templates.get(str(data_idx)) for data_idx in selected["data_idx"]
     ]
+    selected["model_mapped_rxn"] = [
+        previous_predictions_by_id.get(str(data_idx), {}).get("mapped_rxn")
+        for data_idx in selected["data_idx"]
+    ]
+    selected["model_template"] = [
+        previous_predictions_by_id.get(str(data_idx), {}).get("template")
+        for data_idx in selected["data_idx"]
+    ]
+    selected["annotation_source"] = "dataset_ground_truth"
     selected["rejected_template_memory_size"] = len(
         rejected_templates(
             root,

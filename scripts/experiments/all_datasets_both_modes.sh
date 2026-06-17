@@ -6,9 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATASETS="${DATASETS:-USPTO_50K Golden NatComm schneider ringreactions metAMDB}"
 MODES="${MODES:-scratch pretrained}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d_%H%M%S)_${RANDOM}}"
-LOCALMAPPER_EQUIVALENCE_BACKEND="${LOCALMAPPER_EQUIVALENCE_BACKEND:-synkit_its_wl}"
 export RUN_ID
-export LOCALMAPPER_EQUIVALENCE_BACKEND
 
 default_sample_limit() {
   case "$1" in
