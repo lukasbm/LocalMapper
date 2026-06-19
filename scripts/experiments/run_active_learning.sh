@@ -23,6 +23,7 @@ PATIENCE="${PATIENCE:-5}"
 CONFIDENT_PER_TEMPLATE="${CONFIDENT_PER_TEMPLATE:-100}"
 VAL_FRACTION="${VAL_FRACTION:-0.1}"
 TEST_FRACTION="${TEST_FRACTION:-0.1}"
+BUDGET_LABEL="${BUDGET_LABEL:-}"
 MPLCONFIGDIR="${MPLCONFIGDIR:-/tmp/localmapper-mpl}"
 LOCALMAPPER_CGRTOOLS_IGNORE="${LOCALMAPPER_CGRTOOLS_IGNORE:-1}"
 LOCALMAPPER_CGR_MP_CONTEXT="${LOCALMAPPER_CGR_MP_CONTEXT:-fork}"
@@ -38,6 +39,26 @@ echo "Using CGRTools equivalence"
 echo "Using LOCALMAPPER_CGRTOOLS_IGNORE=${LOCALMAPPER_CGRTOOLS_IGNORE}"
 echo "Using LOCALMAPPER_CGR_MP_CONTEXT=${LOCALMAPPER_CGR_MP_CONTEXT}"
 echo "Using LOCALMAPPER_CGR_TIMEOUT_SECONDS=${LOCALMAPPER_CGR_TIMEOUT_SECONDS}"
+
+"${PYTHON_CMD[@]}" -m scripts.RunMetadata \
+  --dataset="$DATASET" \
+  --model="$MODEL" \
+  --init_mode="$INIT_MODE" \
+  --seed="$SEED" \
+  --split="$SPLIT" \
+  --sample_limit="$SAMPLE_LIMIT" \
+  --sample_candidate_factor="$SAMPLE_CANDIDATE_FACTOR" \
+  --iterations="$ITERATIONS" \
+  --batch_size="$BATCH_SIZE" \
+  --num_epochs="$NUM_EPOCHS" \
+  --patience="$PATIENCE" \
+  --confident_per_template="$CONFIDENT_PER_TEMPLATE" \
+  --val_fraction="$VAL_FRACTION" \
+  --test_fraction="$TEST_FRACTION" \
+  --gpu="$GPU" \
+  --pretrained_checkpoint="$PRETRAINED_CHECKPOINT" \
+  --run_id="$RUN_ID" \
+  --budget_label="$BUDGET_LABEL"
 
 for ITERATION in $(seq 1 "$ITERATIONS"); do
   echo "=== ${DATASET} ${INIT_MODE} iteration ${ITERATION}/${ITERATIONS} ==="
