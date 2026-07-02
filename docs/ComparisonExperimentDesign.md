@@ -29,6 +29,27 @@ The comparison should vary the factors that define the LocalMapper use case:
 
 The provided launcher is `scripts/experiments/comparison_sweep.sh`. It runs all selected dataset, mode, budget, and seed combinations through the same `Sample -> Train -> Test` loop and stores each run under `outputs/<dataset>/<model>_seed<seed>/`.
 
+The argument for running the full default matrix is that each axis answers a different comparison question:
+
+- Multiple datasets test whether the method generalizes beyond a single chemistry domain and whether the CGRTools evaluation remains stable on both standard and difficult datasets.
+- Scratch versus pretrained initialization tests whether gains come from the active-learning procedure itself or from starting from the released checkpoint.
+- Low versus standard annotation budgets test sample efficiency, which is the central claim of the LocalMapper active-learning setup.
+
+With the default settings and `SEEDS=0`, the launcher performs 16 top-level runs:
+
+- `USPTO_50K`, `Golden`, and `metAMDB`: 2 modes x 2 budgets = 4 runs each.
+- `ringreactions`: 2 modes x 2 budgets = 4 runs.
+
+Because each run contains several active-learning iterations, the full default matrix expands to 78 `Sample -> Train -> Test` iterations in total:
+
+- `USPTO_50K`, `Golden`, and `metAMDB`: `(3 + 5)` iterations x 2 modes x 3 datasets = 48 iterations.
+- `ringreactions`: `(5 + 10)` iterations x 2 modes = 30 iterations.
+
+This is a reasonable comparison matrix, but it is already expensive. A common workflow is:
+
+- Pilot: `PLAN_ONLY=1` first, then `COMPARISON_NUM_EPOCHS=10` with the full matrix or a subset.
+- Final comparison: keep the same matrix, restore the main epoch budget, and add more seeds only after runtime is understood.
+
 Epochs should not be a primary sweep factor for the comparison experiment. They affect optimization quality and runtime, but they do not directly test the active-learning method. Fixing `NUM_EPOCHS` keeps the comparison interpretable. For pilot runs, use a smaller value such as `COMPARISON_NUM_EPOCHS=10`; for final runs, use the paper-like default of 100 unless validation shows that early stopping consistently ends earlier.
 
 K-fold cross-validation is also not recommended as a default factor. The experiment already has a repeated active-learning procedure over several datasets, two initialization modes, and multiple annotation budgets. K-folds would multiply cost substantially and are less aligned with the paper, which uses defined dataset splits and out-of-distribution datasets. Prefer fixed splits plus a small number of random seeds if uncertainty estimates are needed.
