@@ -440,11 +440,11 @@ class RingReactionsDataset(ReactionDataset):
     def load_items(self) -> list[dict[str, Any]]:
         return _from_line_file(
             self.data_root / "ringreactions" / "train_ringreactions.csv",
-            split=None,
+            split="train",
             id_prefix="train",
         ) + _from_line_file(
             self.data_root / "ringreactions" / "test_ringreactions.csv",
-            split=None,
+            split="test",
             id_prefix="test",
         )
 
@@ -453,11 +453,11 @@ class MetAMDBDataset(ReactionDataset):
     def load_items(self) -> list[dict[str, Any]]:
         return _from_semicolon_file(
             self.data_root / "metAMDB" / "train_metamdb_filtered.csv",
-            split=None,
+            split="train",
             id_prefix="train",
         ) + _from_semicolon_file(
             self.data_root / "metAMDB" / "test_metamdb_filtered.csv",
-            split=None,
+            split="test",
             id_prefix="test",
         )
 

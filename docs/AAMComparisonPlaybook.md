@@ -45,7 +45,11 @@ The experiment varies these factors:
 - Annotation budget:
   - most datasets: `low = 50 x 3`, `standard = 200 x 5`
   - `ringreactions`: `low = 5 x 5`, `standard = 10 x 10`
-- Seed: currently `0` in the default comparison run
+- Split policy: preserve source train/test files when available. `metAMDB` and
+  `ringreactions` use their source train/test files; datasets without explicit
+  source splits are split by `seed`, `val_fraction`, and `test_fraction`.
+- Seed: currently `0` in the default comparison run. Additional seeds should be
+  targeted, not full-matrix repeats, unless runtime is no longer a constraint.
 
 The active-learning loop is always:
 
@@ -61,7 +65,7 @@ That loop is orchestrated in
 Another agent should treat the following as controlled variables unless the
 comparison explicitly targets them:
 
-- Dataset and split fractions
+- Dataset and split policy
 - Seed
 - Sampled reactions per iteration
 - Sample candidate factor
@@ -262,6 +266,24 @@ Another agent should follow this protocol.
    `aam.atom_accuracy`, `invalid_mapping_count`, calibration metrics, template-confidence metrics
 7. Plot learning curves against cumulative annotation budget, not only final bars.
 8. State explicitly if confidence outputs are not comparable across systems.
+
+## Practical runtime policy
+
+Do not run the full matrix for five seeds by default. A single full pass already
+takes multiple days, and preserving source train/test splits removes one major
+reason to repeat seeds for split robustness on `metAMDB` and `ringreactions`.
+
+Use this cheaper policy:
+
+1. Run the full matrix once with `SEEDS=0`.
+2. Use source train/test files where available.
+3. Add repeat seeds only for conclusions that are close or important.
+4. Prefer a targeted repeat such as one dataset x one budget x two modes.
+5. Report that seed replication is targeted rather than exhaustive.
+
+Seeds still matter for model initialization, active-learning sampling,
+pseudo-label sampling, and validation subsets inside the annotation set. They
+matter less for datasets whose train/test split is fixed by source files.
 
 ## Files another agent should use
 

@@ -25,7 +25,8 @@ The comparison should vary the factors that define the LocalMapper use case:
 - Dataset: at minimum `USPTO_50K`, `Golden`, `ringreactions`, and `metAMDB`; additional datasets such as `NatComm` and `schneider` can be added when runtime permits.
 - Initialization: train from scratch and fine-tune from the released LocalMapper checkpoint.
 - Annotation budget: compare a low-budget setting against the paper-style budget. The default sweep uses `50 x 3` and `200 x 5` annotations for most datasets, and `5 x 5` and `10 x 10` for `ringreactions`.
-- Seed: use seed 0 for pilot experiments; add more seeds only after the pipeline is stable and the expected runtime is known.
+- Split policy: preserve source train/test files when the dataset provides them. `metAMDB` and `ringreactions` keep their source train/test files; datasets without source splits are split by `seed`, `val_fraction`, and `test_fraction`.
+- Seed: use seed 0 for the full matrix. Because a full pass takes multiple days, add extra seeds only for targeted follow-up runs where the result is close, surprising, or central to the claim.
 
 The provided launcher is `scripts/experiments/comparison_sweep.sh`. It runs all selected dataset, mode, budget, and seed combinations through the same `Sample -> Train -> Test` loop and stores each run under `outputs/<dataset>/<model>_seed<seed>/`.
 
@@ -48,11 +49,12 @@ Because each run contains several active-learning iterations, the full default m
 This is a reasonable comparison matrix, but it is already expensive. A common workflow is:
 
 - Pilot: `PLAN_ONLY=1` first, then `COMPARISON_NUM_EPOCHS=10` with the full matrix or a subset.
-- Final comparison: keep the same matrix, restore the main epoch budget, and add more seeds only after runtime is understood.
+- Main comparison: keep the same matrix, restore the main epoch budget, and run `SEEDS=0`.
+- Targeted repeats: run additional seeds only for the smallest subset needed to answer uncertainty questions, for example a single dataset, one budget, and the two initialization modes.
 
 Epochs should not be a primary sweep factor for the comparison experiment. They affect optimization quality and runtime, but they do not directly test the active-learning method. Fixing `NUM_EPOCHS` keeps the comparison interpretable. For pilot runs, use a smaller value such as `COMPARISON_NUM_EPOCHS=10`; for final runs, use the paper-like default of 100 unless validation shows that early stopping consistently ends earlier.
 
-K-fold cross-validation is also not recommended as a default factor. The experiment already has a repeated active-learning procedure over several datasets, two initialization modes, and multiple annotation budgets. K-folds would multiply cost substantially and are less aligned with the paper, which uses defined dataset splits and out-of-distribution datasets. Prefer fixed splits plus a small number of random seeds if uncertainty estimates are needed.
+K-fold cross-validation is also not recommended as a default factor. The experiment already has a repeated active-learning procedure over several datasets, two initialization modes, and multiple annotation budgets. K-folds would multiply cost substantially and are less aligned with the paper, which uses defined dataset splits and out-of-distribution datasets. Prefer source splits where available, fraction splits only where unavoidable, and targeted repeat seeds instead of running the full matrix five times.
 
 ## Suggested figures
 

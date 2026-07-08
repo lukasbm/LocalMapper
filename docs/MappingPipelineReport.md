@@ -15,11 +15,11 @@ Datasets are defined in `localmapper/dataset.py` and loaded through `DATASETS`. 
 - `id`: stable dataset row identifier.
 - `rxn`: canonicalized mapped reaction used for training labels, annotation emulation, and template extraction.
 - `mapped_rxns`: original mapped alternatives from the source row, retained for evaluation.
-- `split`: assigned by `select_split`.
+- `split`: source split when present; otherwise assigned by `select_split`.
 - `original_split`: source split metadata where relevant.
 - `num_mappings`: number of original alternatives in the source row.
 
-All datasets are now treated as unsplit pools unless they are intrinsically unsplit already. For `metAMDB`, `train_metamdb_filtered.csv` and `test_metamdb_filtered.csv` are combined into one pool, and `train` / `val` / `test` are controlled by `seed`, `val_fraction`, and `test_fraction`. The same combined-split approach applies to `ringreactions`; `NatComm` is no longer hard-coded to test-only.
+Datasets with source train/test files keep those source splits. In particular, `metAMDB` uses `train_metamdb_filtered.csv` as `train` and `test_metamdb_filtered.csv` as `test`; `ringreactions` uses `train_ringreactions.csv` as `train` and `test_ringreactions.csv` as `test`. Datasets without explicit source splits, such as the current `USPTO_50K` and `Golden` CSVs, are split by `seed`, `val_fraction`, and `test_fraction`.
 
 Active learning proceeds as follows:
 
@@ -171,7 +171,7 @@ Use a fresh `MODEL` name after dataset semantics change. Old output directories 
 ## Known Gotchas
 
 - Existing outputs under `outputs/metAMDB/...` are not comparable across loader changes.
-- `test_fraction` and `val_fraction` now matter for datasets that previously had explicit split files.
+- `test_fraction` and `val_fraction` matter for datasets without explicit source splits. For `metAMDB` and `ringreactions`, source train/test files now define the dataset-level split.
 - `RawExact` can remain low even when mapping quality is high.
 - `Accuracy` can look high when exact mapping quality is poor due to class imbalance.
 - Pseudo-labels are still trusted by template membership, not by an independently calibrated confidence score.
@@ -182,8 +182,8 @@ Use a fresh `MODEL` name after dataset semantics change. Old output directories 
 
 Implemented:
 
-- combined unsplit dataset loading for metAMDB/ringreactions/NatComm,
-- seed/fraction-controlled train/val/test splits,
+- source train/test preservation for metAMDB and ringreactions,
+- seed/fraction-controlled train/val/test splits for datasets without source splits,
 - equivalence-aware evaluation with `EquivExact` and `RawExact`,
 - raw alternative retention via `mapped_rxns`,
 - canonical single-target normalization before label extraction,
