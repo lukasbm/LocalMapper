@@ -24,7 +24,7 @@ holding everything else fixed.
 
 Only one major factor should change at a time.
 
-- If the question is "does pretrained initialization help?", keep dataset,
+- If the question is "does fine-tuning from the released checkpoint help?", keep dataset,
   seed, budget, splits, and evaluation backend fixed.
 - If the question is "does a different AAM system help?", keep dataset, seed,
   sampled reactions, splits, and metric definitions fixed.
@@ -41,15 +41,16 @@ The default sweep is implemented in
 The experiment varies these factors:
 
 - Dataset: `USPTO_50K`, `Golden`, `ringreactions`, `metAMDB`
-- Initialization mode: `scratch`, `pretrained`
+- Initialization mode: `scratch`, `finetune`
 - Annotation budget:
   - most datasets: `low = 50 x 3`, `standard = 200 x 5`
   - `ringreactions`: `low = 5 x 5`, `standard = 10 x 10`
 - Split policy: preserve source train/test files when available. `metAMDB` and
   `ringreactions` use their source train/test files; datasets without explicit
   source splits are split by `seed`, `val_fraction`, and `test_fraction`.
-- Seed: currently `0` in the default comparison run. Additional seeds should be
-  targeted, not full-matrix repeats, unless runtime is no longer a constraint.
+- Seed: currently `0` in the default comparison run. Use five seeds for the
+  final targeted comparison when runtime permits; do not spend the budget on
+  a 20-seed full matrix.
 
 The active-learning loop is always:
 
@@ -75,6 +76,7 @@ comparison explicitly targets them:
 - Confidence selection logic
 - Exact metric definitions
 - Equivalence backend and its timeout / parser settings
+- EEquAAM evaluable and unevaluable counts
 
 In this repository, the run metadata already records these controls in
 `run_metadata.json`, including:
@@ -82,9 +84,10 @@ In this repository, the run metadata already records these controls in
 - active-learning budget and total annotation budget
 - initialization mode
 - pretrained checkpoint
+- training split and evaluation split
 - split fractions
 - equivalence backend
-- CGRTools timeout and parser handling
+- EEquAAM timeout, chunking, and parser failure handling
 - software versions
 - git commit and dirty state
 
@@ -115,13 +118,16 @@ This is the paper-aligned exact mapping metric. It does not use raw mapped-SMILE
 string equality. Instead it checks whether the predicted and reference mappings
 are chemically equivalent under the configured backend.
 
-In the current implementation, the intended backend is `cgrtools`.
+In the current implementation, the intended backend is `eequaam_its`.
 
 Secondary AAM metrics are:
 
 - `aam.atom_accuracy`
 - `aam.raw_exact_match_accuracy`
 - `aam.invalid_mapping_count`
+- `aam.evaluable_count`
+- `aam.unevaluable_count`
+- `aam.eequaam_status_counts`
 - `aam.total`
 
 Interpretation:
@@ -138,79 +144,35 @@ Interpretation:
 Metric construction lives in
 [scripts/Test.py](/homes/biertank/lukas/Documents/repos/LocalMapper/scripts/Test.py:117).
 
-## Confidence and calibration metrics
+## Removed calibration metrics
 
-The comparison does not only measure final mapping correctness. It also checks
-whether the system's confidence signal is useful.
-
-### Score calibration metrics
-
-These use the scalar mapping score from the model output:
-
-- `score_calibration.ap`
-- `score_calibration.f1`
-- `score_calibration.accuracy`
-- `score_calibration.precision`
-- `score_calibration.recall`
-- `score_calibration.mcc`
-- `score_calibration.threshold`
-- `score_calibration.confusion.*`
-
-These are computed at the threshold that maximizes F1 on the evaluated rows.
-That threshold source is recorded as `best_f1_on_evaluation`.
-
-There is also a fixed-threshold diagnostic:
-
-- `score_uncalibrated.*`
-
-This uses threshold `0.5` and should be treated as a comparability check, not
-as the main score metric.
-
-Definitions are in
-[scripts/Test.py](/homes/biertank/lukas/Documents/repos/LocalMapper/scripts/Test.py:245)
-and
-[scripts/Test.py](/homes/biertank/lukas/Documents/repos/LocalMapper/scripts/Test.py:269).
-
-### Template-confidence metrics
-
-These use the binary `confident` prediction flag:
-
-- `template_confidence.coverage`
-- `template_confidence.confident_accuracy`
-- `template_confidence.unconfident_accuracy`
-- `template_confidence.f1`
-- `template_confidence.mcc`
-- `template_confidence.precision`
-- `template_confidence.recall`
-- `template_confidence.confusion.*`
-
-These metrics matter because the active-learning loop depends on confidence
-signals, not only final mapped reactions.
-
-If another AAM system does not produce an equivalent confidence output, the
-comparison must state that clearly. Do not silently compare a system with a
-confidence signal against one without it and then draw conclusions about sample
-selection quality.
+The current benchmark reports EEquAAM exact accuracy and denominator diagnostics
+only. It no longer reports AP, F1, MCC, score-threshold metrics, or confidence
+confusion matrices. `mapping_score` and `confident` remain in the prediction CSV
+as row-level diagnostics, but they are not benchmark metrics.
 
 ## Equivalence backend requirements
 
-The repository currently uses CGRTools-style equivalence for the primary exact
+The repository currently uses EEquAAM in default ITS mode for the primary exact
 metric.
 
 Critical settings:
 
-- `LOCALMAPPER_CGRTOOLS_IGNORE=1`
-- `LOCALMAPPER_CGR_MP_CONTEXT=fork`
-- `LOCALMAPPER_CGR_TIMEOUT_SECONDS=2`
+- `LOCALMAPPER_AAM_BACKEND=eequaam_its`
+- `EEQUAAM_CHUNK_SIZE=100`
+- `EEQUAAM_BASE_TIMEOUT_SECONDS=30`
+- `EEQUAAM_TIMEOUT_SECONDS_PER_REACTION=5`
+- `LOCALMAPPER_EEQUAAM_TMPDIR=outputs/eequaam_tmp`
 
 These are exported in
 [scripts/experiments/run_active_learning.sh](/homes/biertank/lukas/Documents/repos/LocalMapper/scripts/experiments/run_active_learning.sh:27).
 
 Why this matters:
 
-- parser behavior changes whether noisy reactions are counted or dropped
+- parser behavior changes whether noisy reactions are counted or marked unevaluable
 - timeout behavior changes whether difficult reactions become failures or hangs
-- multiprocessing mode changes practical evaluation stability
+- chunking changes how quickly EEquAAM isolates bad comparisons
+- temp-directory placement matters on machines where `/tmp` is small or full
 
 If another agent swaps in another equivalence backend, it must report:
 
@@ -218,7 +180,7 @@ If another agent swaps in another equivalence backend, it must report:
 - parser policy
 - timeout policy
 - failure behavior
-- whether results are directly comparable to CGRTools-based runs
+- whether results are directly comparable to EEquAAM-based runs
 
 Do not compare results across backends without making that explicit.
 
@@ -230,7 +192,7 @@ Use the existing sweep and keep the equivalence backend fixed.
 
 Questions answered:
 
-- scratch vs pretrained
+- scratch vs fine-tuning
 - low vs standard budget
 - easier vs harder datasets
 
@@ -263,7 +225,7 @@ Another agent should follow this protocol.
 5. Report the primary metric first:
    `aam.equiv_exact_match_accuracy`
 6. Report secondary context:
-   `aam.atom_accuracy`, `invalid_mapping_count`, calibration metrics, template-confidence metrics
+   `aam.atom_accuracy`, `invalid_mapping_count`, and EEquAAM evaluable/unevaluable counts
 7. Plot learning curves against cumulative annotation budget, not only final bars.
 8. State explicitly if confidence outputs are not comparable across systems.
 
@@ -320,6 +282,7 @@ For cross-run analysis:
 - Comparing systems with different sampled reactions
 - Reporting raw exact match as the main AAM metric
 - Ignoring invalid mapping counts
+- Reporting EEquAAM accuracy without its evaluable/unevaluable denominator
 - Comparing confidence-driven metrics when one system lacks a comparable score
 - Changing epoch budget and active-learning budget at the same time
 - Mixing pilot runs and final runs in one table
@@ -332,9 +295,8 @@ For papers, notes, or agent handoff summaries, report in this order:
 1. `aam.equiv_exact_match_accuracy`
 2. `aam.atom_accuracy`
 3. `aam.invalid_mapping_count`
-4. `score_calibration.ap` and `score_calibration.f1`
-5. `template_confidence.coverage` and `template_confidence.confident_accuracy`
-6. provenance:
+4. `aam.evaluable_count`, `aam.unevaluable_count`, and `aam.eequaam_status_counts`
+5. provenance:
    backend, timeout settings, run id, dataset, seed, budget, init mode
 
 That ordering keeps the chemistry-valid exact metric primary while still

@@ -136,7 +136,7 @@ To use the model to predict the atom-mapping on raw reactions, simply run
 ```
 python -m scripts.Test --dataset=USPTO_50K --model=LocalMapper --seed=0 --iteration=1 --split=train
 ```
-This writes the prediction CSV plus a metrics JSON with AP, MCC, accuracy, and F1 into the run directory.
+This writes the prediction CSV plus an EEquAAM accuracy metrics JSON into the run directory.
 
 ### [4] Repeat
 Iteration 2 samples uncertain predicted templates first, then uses dataset ground truth to emulate the next manual annotation round.
@@ -147,11 +147,12 @@ python -m scripts.Sample --dataset=USPTO_50K --model=LocalMapper --seed=0 --iter
 ### Experiment scripts
 Preconfigured active-learning loops are available in `scripts/experiments/`:
 ```
+scripts/experiments/run_pretrained_eval.sh
 scripts/experiments/metamdb_scratch_200x5.sh
 scripts/experiments/metamdb_pretrained_200x5.sh
 scripts/experiments/ringreactions_pretrained_10x10.sh
 ```
-Each script runs `Sample -> Train -> Test` for every iteration. Outputs are grouped by dataset, model name, and seed under `outputs/` and `models/`.
+`run_pretrained_eval.sh` only evaluates the released checkpoint and defaults to `split=all`. The active-learning scripts run `Sample -> Train -> Test` for every iteration, using `TRAIN_SPLIT=train` and `EVAL_SPLIT=test` by default. The `*_pretrained_*` wrappers are fine-tuning runs: they initialize iteration 1 from the released checkpoint and then train. Outputs are grouped by dataset, model name, and seed under `outputs/` and `models/`.
 
 ## Publication
 ```bibtex

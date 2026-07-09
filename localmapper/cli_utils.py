@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import random
+
+import numpy as np
 import torch
 from torch import nn
 from torch.optim import Adam, lr_scheduler
@@ -40,6 +43,20 @@ def init_featurizer():
     return _init_featurizer()
 
 
+def set_global_seed(seed: int):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def _torch_generator(seed: int):
+    generator = torch.Generator()
+    generator.manual_seed(seed)
+    return generator
+
+
 def load_dataloader(
     dataset_name,
     split,
@@ -72,6 +89,7 @@ def load_dataloader(
         dataset,
         batch_size=batch_size,
         shuffle=split == "train",
+        generator=_torch_generator(seed) if split == "train" else None,
         collate_fn=collate_reaction_batch,
     )
 
@@ -117,6 +135,7 @@ def load_train_val_dataloaders(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
+        generator=_torch_generator(seed),
         collate_fn=collate_reaction_batch,
     )
     val_loader = DataLoader(
@@ -135,8 +154,6 @@ def load_train_val_dataloaders_from_items(
     val_fraction=0.1,
     seed=0,
 ):
-    import numpy as np
-
     items = list(items)
     if not items:
         raise ValueError("No training items available")
@@ -169,6 +186,7 @@ def load_train_val_dataloaders_from_items(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
+        generator=_torch_generator(seed),
         collate_fn=collate_reaction_batch,
     )
     val_loader = DataLoader(

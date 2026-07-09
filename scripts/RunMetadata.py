@@ -51,7 +51,9 @@ def main(
     model: str,
     init_mode: str,
     seed: int = 0,
-    split: str = "train",
+    split: str | None = None,
+    train_split: str | None = None,
+    eval_split: str = "test",
     sample_limit: int = 200,
     sample_candidate_factor: int = 20,
     iterations: int = 5,
@@ -63,9 +65,14 @@ def main(
     test_fraction: float = 0.1,
     gpu: str = "cuda:0",
     pretrained_checkpoint: str | None = None,
+    template_library: str | None = None,
+    eequaam_chunk_size: int = 100,
+    eequaam_base_timeout_seconds: float = 30.0,
+    eequaam_timeout_seconds_per_reaction: float = 5.0,
     run_id: str | None = None,
     budget_label: str | None = None,
 ):
+    train_split = train_split or split or "train"
     run_dir = _output_dir(ROOT, dataset, model, seed)
     mkdir_p(run_dir)
 
@@ -76,7 +83,9 @@ def main(
         "run_dir": str(run_dir),
         "init_mode": init_mode,
         "seed": int(seed),
-        "split": split,
+        "split": train_split,
+        "train_split": train_split,
+        "eval_split": eval_split,
         "active_learning": {
             "sample_limit_per_iteration": int(sample_limit),
             "sample_candidate_factor": int(sample_candidate_factor),
@@ -92,30 +101,32 @@ def main(
             "patience": int(patience),
             "confident_per_template": int(confident_per_template),
             "pretrained_checkpoint": pretrained_checkpoint
-            if init_mode == "pretrained"
+            if init_mode
+            in {"pretrained", "finetune", "pretrained_eval", "paper_checkpoint"}
             else None,
             "device_request": gpu,
         },
         "splits": {
+            "train": train_split,
+            "eval": eval_split,
             "val_fraction": float(val_fraction),
             "test_fraction": float(test_fraction),
         },
         "evaluation": {
             "aam_equivalence_backend": mapping_comparison_backend(),
-            "cgrtools_ignore_parser_errors": os.environ.get(
-                "LOCALMAPPER_CGRTOOLS_IGNORE", "1"
+            "template_library": template_library,
+            "eequaam_chunk_size": int(eequaam_chunk_size),
+            "eequaam_base_timeout_seconds": float(eequaam_base_timeout_seconds),
+            "eequaam_timeout_seconds_per_reaction": float(
+                eequaam_timeout_seconds_per_reaction
             ),
-            "cgrtools_mp_context": os.environ.get(
-                "LOCALMAPPER_CGR_MP_CONTEXT", "fork"
-            ),
-            "cgrtools_timeout_seconds": os.environ.get(
-                "LOCALMAPPER_CGR_TIMEOUT_SECONDS", "2"
+            "eequaam_tmpdir": os.environ.get(
+                "LOCALMAPPER_EEQUAAM_TMPDIR", "outputs/eequaam_tmp"
             ),
         },
         "software": {
             "python": sys.version.split()[0],
             "platform": platform.platform(),
-            "cgrtools": _package_version("CGRtools", "cgrtools-plus", "CGRtools"),
             "torch": _package_version("torch", "torch"),
         },
         "git": {

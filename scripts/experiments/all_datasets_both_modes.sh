@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 DATASETS="${DATASETS:-USPTO_50K Golden NatComm schneider ringreactions metAMDB}"
-MODES="${MODES:-scratch pretrained}"
+MODES="${MODES:-scratch finetune}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d_%H%M%S)_${RANDOM}}"
 export RUN_ID
 

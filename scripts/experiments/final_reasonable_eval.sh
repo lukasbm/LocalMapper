@@ -18,9 +18,9 @@ FULL_SEEDS="${FULL_SEEDS:-0}"
 REPEAT_SEEDS="${REPEAT_SEEDS:-1 2}"
 COMPARISON_NUM_EPOCHS="${COMPARISON_NUM_EPOCHS:-100}"
 
-# Full seed-0 matrix: all main datasets, both init modes, low + standard budget.
+# Full seed-0 matrix: all main datasets, both trainable modes, low + standard budget.
 FULL_DATASETS="${FULL_DATASETS:-USPTO_50K Golden ringreactions metAMDB}"
-FULL_MODES="${FULL_MODES:-scratch pretrained}"
+FULL_MODES="${FULL_MODES:-scratch finetune}"
 FULL_BUDGET_PROFILES="${FULL_BUDGET_PROFILES:-low:50:3 standard:200:5}"
 FULL_RINGREACTIONS_BUDGET_PROFILES="${FULL_RINGREACTIONS_BUDGET_PROFILES:-low:5:5 standard:10:10}"
 
@@ -28,7 +28,7 @@ FULL_RINGREACTIONS_BUDGET_PROFILES="${FULL_RINGREACTIONS_BUDGET_PROFILES:-low:5:
 # where source train/test splits are now preserved and conclusions are most
 # likely to matter.
 REPEAT_DATASETS="${REPEAT_DATASETS:-ringreactions metAMDB}"
-REPEAT_MODES="${REPEAT_MODES:-scratch pretrained}"
+REPEAT_MODES="${REPEAT_MODES:-scratch finetune}"
 REPEAT_BUDGET_PROFILES="${REPEAT_BUDGET_PROFILES:-standard:200:5}"
 REPEAT_RINGREACTIONS_BUDGET_PROFILES="${REPEAT_RINGREACTIONS_BUDGET_PROFILES:-standard:10:10}"
 

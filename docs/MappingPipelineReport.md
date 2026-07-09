@@ -69,7 +69,7 @@ EquivExact: equivalence-aware exact mapping accuracy
 RawExact: raw string exact accuracy
 ```
 
-The printed `Accuracy`, `F1`, `MCC`, and `AP` are not mapping accuracy. They measure how well the model’s internal `mapping_score` separates correct from incorrect decoded mappings after thresholding. In highly imbalanced settings these can be misleading. `EquivExact` is the primary mapping metric.
+Older versions also printed thresholded score diagnostics such as `Accuracy`, `F1`, `MCC`, and `AP`. These have been removed from the benchmark output; `EquivExact` is the primary mapping metric.
 
 ## Training Target Normalization
 

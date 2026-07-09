@@ -1,8 +1,9 @@
 from pathlib import Path
 import json
+import os
+import pickle
 
 import fire
-import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
@@ -16,13 +17,38 @@ from localmapper.active_learning import (
     prediction_path,
     verified_templates,
 )
-from localmapper.cli_utils import init_featurizer, load_dataloader, load_test_model
+from localmapper.cli_utils import (
+    init_featurizer,
+    load_dataloader,
+    load_test_model,
+    set_global_seed,
+)
 from localmapper.dataset import (
-    mapping_comparison_backend,
-    mapping_matches_any,
     mapping_signature,
     mkdir_p,
 )
+from localmapper.eequaam import (
+    EEQUAAM_BACKEND,
+    EEquAAMComparison,
+    EEquAAMResult,
+    evaluate_eequaam,
+    summarize_row_results,
+)
+
+
+def resolve_device(gpu: str) -> torch.device:
+    requested = str(gpu)
+    if requested.startswith("cuda"):
+        if torch.cuda.is_available():
+            return torch.device(requested)
+        if os.environ.get("ALLOW_CPU", "0") == "1":
+            print("CUDA requested but unavailable; ALLOW_CPU=1 so testing on CPU.")
+            return torch.device("cpu")
+        raise RuntimeError(
+            f"CUDA device {requested!r} was requested, but torch.cuda.is_available() is false. "
+            "Fix the CUDA/PyTorch environment, set GPU=cpu, or set ALLOW_CPU=1 for an intentional CPU run."
+        )
+    return torch.device(requested)
 
 
 def write_predictions(
@@ -32,16 +58,18 @@ def write_predictions(
     model,
     data_loader,
     try_twice,
+    eequaam_chunk_size,
+    eequaam_base_timeout_seconds,
+    eequaam_timeout_seconds_per_reaction,
 ):
     model.eval()
+    selected_count = len(data_loader.dataset) if hasattr(data_loader, "dataset") else None
     rows = []
     correctness_labels = []
     raw_correctness_labels = []
     atom_correct = 0
     atom_total = 0
     invalid_mapping_count = 0
-    mapping_scores = []
-    confidence_predictions = []
     with torch.no_grad():
         for batch_data in tqdm(
             data_loader, total=len(data_loader), desc="Predicting AAM..."
@@ -55,10 +83,9 @@ def write_predictions(
                 try_twice=try_twice,
                 return_dict=True,
             )
-            for result, item in zip(results, items):
+            for result, item, input_rxn in zip(results, items, rxns):
                 reference_rxns = item.get("mapped_rxns", [item["rxn"]])
                 raw_correct = result["mapped_rxn"] in reference_rxns
-                correct = mapping_matches_any(result["mapped_rxn"], reference_rxns)
                 atom_metrics = _atom_correspondence_metrics(
                     result["mapped_rxn"], reference_rxns
                 )
@@ -67,20 +94,18 @@ def write_predictions(
                 invalid_mapping_count += int(atom_metrics["invalid"])
                 mapping_score = _mapping_score(result)
                 confidence = bool(result["confident"])
-                correctness_labels.append(bool(correct))
                 raw_correctness_labels.append(bool(raw_correct))
-                mapping_scores.append(mapping_score)
-                confidence_predictions.append(confidence)
                 rows.append(
                     {
                         "data_idx": item["id"],
                         "split": item["split"],
+                        "input_rxn": input_rxn,
                         "ground_truth_mapped_rxn": item["rxn"],
                         "mapped_rxn": result["mapped_rxn"],
+                        "_reference_rxns": reference_rxns,
                         "template": result["template"],
                         "confident": result["confident"],
                         "mapping_score": mapping_score,
-                        "is_correct": correct,
                         "raw_is_correct": raw_correct,
                         "atom_correct": atom_metrics["correct"],
                         "atom_total": atom_metrics["total"],
@@ -90,39 +115,38 @@ def write_predictions(
                         "num_mappings": item["num_mappings"],
                     }
                 )
-    y_true = np.asarray(correctness_labels, dtype=bool)
-    y_score = np.asarray(mapping_scores, dtype=float)
-    score_calibration = _compute_score_calibration(y_true, y_score)
-    score_uncalibrated = _compute_score_threshold_metrics(
-        y_true,
-        y_score,
-        threshold=0.5,
-        threshold_source="fixed_0.5",
+    eequaam_stats = _apply_eequaam_metrics(
+        rows,
+        chunk_size=eequaam_chunk_size,
+        base_timeout_seconds=eequaam_base_timeout_seconds,
+        timeout_seconds_per_reaction=eequaam_timeout_seconds_per_reaction,
     )
-    calibrated_threshold = score_calibration["threshold"]
+    correctness_labels = [bool(row["is_correct"]) for row in rows]
+    eequaam_evaluable_labels = [
+        bool(row["is_correct"]) for row in rows if row["eequaam_evaluable"]
+    ]
+    invalid_mapping_count = sum(
+        row["eequaam_status"] == "predicted_not_complete_bijective" for row in rows
+    )
+    status_counts = summarize_row_results(rows)
+    strict_accuracy = (
+        float(sum(correctness_labels) / len(correctness_labels))
+        if correctness_labels
+        else 0.0
+    )
 
     mkdir_p(Path(output_path).parent)
     df = pd.DataFrame(rows)
-    if not df.empty:
-        df["score_is_correct_calibrated"] = (
-            df["mapping_score"].astype(float) >= calibrated_threshold
-        )
-        df["score_is_correct_uncalibrated"] = (
-            df["mapping_score"].astype(float) >= score_uncalibrated["threshold"]
-        )
-        df["score_calibrated_threshold"] = calibrated_threshold
-        df["score_uncalibrated_threshold"] = score_uncalibrated["threshold"]
+    if "_reference_rxns" in df:
+        df = df.drop(columns=["_reference_rxns"])
     df.to_csv(output_path, index=False)
 
     metrics = {
         "aam": {
-            "equiv_exact_match_accuracy": (
-                float(y_true.mean())
-                if correctness_labels
-                else 0.0
-            ),
+            "equiv_exact_match_accuracy": strict_accuracy,
+            "strict_equiv_exact_match_accuracy": strict_accuracy,
             "raw_exact_match_accuracy": (
-                float(np.asarray(raw_correctness_labels, dtype=bool).mean())
+                float(sum(raw_correctness_labels) / len(raw_correctness_labels))
                 if raw_correctness_labels
                 else 0.0
             ),
@@ -130,15 +154,31 @@ def write_predictions(
             "atom_correct": int(atom_correct),
             "atom_total": int(atom_total),
             "invalid_mapping_count": int(invalid_mapping_count),
+            "evaluable_count": int(sum(row["eequaam_evaluable"] for row in rows)),
+            "unevaluable_count": int(
+                sum(not row["eequaam_evaluable"] for row in rows)
+            ),
+            "eequaam_failed_count": int(status_counts.get("eequaam_failed", 0)),
+            "evaluable_accuracy": (
+                float(sum(eequaam_evaluable_labels) / len(eequaam_evaluable_labels))
+                if eequaam_evaluable_labels
+                else 0.0
+            ),
+            "eequaam_status_counts": status_counts,
+            "selected_count": int(selected_count) if selected_count is not None else None,
+            "predicted_count": int(len(rows)),
             "total": int(len(correctness_labels)),
-            "equivalence_backend": mapping_comparison_backend(),
+            **eequaam_stats,
+            "equivalence_backend": EEQUAAM_BACKEND,
         },
-        "score_calibration": score_calibration,
-        "score_uncalibrated": score_uncalibrated,
-        "template_confidence": _compute_confidence_metrics(
-            y_true,
-            np.asarray(confidence_predictions, dtype=bool),
-        ),
+        "template_library": {
+            "accepted_template_count": (
+                int(len(accepted_templates))
+                if accepted_templates is not None
+                else None
+            ),
+            "has_template_filter": accepted_templates is not None,
+        },
     }
     mkdir_p(Path(metrics_path).parent)
     with open(metrics_path, "w") as f:
@@ -190,6 +230,118 @@ def _atom_correspondence_metrics(predicted_rxn, reference_rxns):
     }
 
 
+def _apply_eequaam_metrics(
+    rows,
+    *,
+    chunk_size,
+    base_timeout_seconds,
+    timeout_seconds_per_reaction,
+):
+    requested_reference_comparison_count = 0
+    signature_short_circuit_count = 0
+    precomputed_results: dict[str, EEquAAMResult] = {}
+    comparisons = []
+    comparison_to_row = {}
+    for row_index, row in enumerate(tqdm(rows, desc="Preparing EEquAAM refs")):
+        predicted_signature = mapping_signature(row["mapped_rxn"])
+        unique_references = []
+        seen_reference_keys = set()
+        for reference_rxn in row["_reference_rxns"]:
+            requested_reference_comparison_count += 1
+            reference_signature = mapping_signature(reference_rxn)
+            if (
+                predicted_signature is not None
+                and reference_signature is not None
+                and predicted_signature == reference_signature
+            ):
+                comparison_id = f"row{row_index}__signature_match"
+                comparison_to_row[comparison_id] = row_index
+                precomputed_results[comparison_id] = EEquAAMResult(
+                    True,
+                    "ok",
+                    "exact mapping-signature match",
+                )
+                signature_short_circuit_count += 1
+                unique_references = []
+                break
+
+            reference_key = reference_signature or reference_rxn
+            if reference_key in seen_reference_keys:
+                continue
+            seen_reference_keys.add(reference_key)
+            unique_references.append(reference_rxn)
+
+        for reference_index, reference_rxn in enumerate(unique_references):
+            comparison_id = f"row{row_index}__ref{reference_index}"
+            comparison_to_row[comparison_id] = row_index
+            comparisons.append(
+                EEquAAMComparison(
+                    comparison_id=comparison_id,
+                    predicted_rxn=row["mapped_rxn"],
+                    reference_rxn=reference_rxn,
+                    row_index=row_index,
+                )
+            )
+
+    comparison_results = dict(precomputed_results)
+    comparison_results.update(
+        evaluate_eequaam(
+            comparisons,
+            eequaam_script=ROOT / "EEquAAM.py",
+            chunk_size=chunk_size,
+            base_timeout_seconds=base_timeout_seconds,
+            timeout_seconds_per_reaction=timeout_seconds_per_reaction,
+        )
+    )
+
+    row_results = [[] for _ in rows]
+    for comparison_id, result in comparison_results.items():
+        row_results[comparison_to_row[comparison_id]].append(result)
+
+    for row, results in zip(rows, row_results):
+        equivalent_results = [result for result in results if result.equivalent]
+        ok_results = [result for result in results if result.status == "ok"]
+        status_counts: dict[str, int] = {}
+        for result in results:
+            status_counts[result.status] = status_counts.get(result.status, 0) + 1
+
+        row["is_correct"] = bool(equivalent_results)
+        row["eequaam_is_correct"] = bool(equivalent_results)
+        row["eequaam_evaluable"] = bool(ok_results)
+        row["eequaam_status"] = _row_eequaam_status(results)
+        row["eequaam_status_counts"] = json.dumps(status_counts, sort_keys=True)
+        row["eequaam_details"] = json.dumps(
+            [
+                {"status": result.status, "detail": result.detail}
+                for result in results
+                if result.status != "ok" and result.detail
+            ],
+            sort_keys=True,
+        )
+
+    return {
+        "eequaam_requested_reference_comparison_count": int(
+            requested_reference_comparison_count
+        ),
+        "eequaam_subprocess_comparison_count": int(len(comparisons)),
+        "eequaam_signature_short_circuit_count": int(signature_short_circuit_count),
+    }
+
+
+def _row_eequaam_status(results):
+    if not results:
+        return "no_reference_comparison"
+    if any(result.equivalent for result in results):
+        return "ok_equivalent"
+    if any(result.status == "ok" for result in results):
+        return "ok_non_equivalent"
+    if any(result.status == "predicted_not_complete_bijective" for result in results):
+        return "predicted_not_complete_bijective"
+    if any(result.status == "eequaam_failed" for result in results):
+        return "eequaam_failed"
+    return results[0].status
+
+
 def _mapping_score(result):
     mapper = result.get("mapper")
     map_steps = getattr(mapper, "map_steps", None)
@@ -199,140 +351,6 @@ def _mapping_score(result):
     if scores.empty:
         return 0.0
     return float(scores.mean())
-
-
-def _compute_confidence_metrics(y_true, y_pred):
-    y_true = y_true.astype(bool)
-    y_pred = y_pred.astype(bool)
-
-    tp = int(np.sum(y_true & y_pred))
-    tn = int(np.sum(~y_true & ~y_pred))
-    fp = int(np.sum(~y_true & y_pred))
-    fn = int(np.sum(y_true & ~y_pred))
-    total = int(len(y_true))
-
-    accuracy = (tp + tn) / total if total else 0.0
-    coverage = float(y_pred.mean()) if total else 0.0
-    confident_accuracy = float(y_true[y_pred].mean()) if np.any(y_pred) else 0.0
-    unconfident_accuracy = float(y_true[~y_pred].mean()) if np.any(~y_pred) else 0.0
-    precision = tp / (tp + fp) if (tp + fp) else 0.0
-    recall = tp / (tp + fn) if (tp + fn) else 0.0
-    f1 = (
-        (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
-    )
-    mcc_denom = float((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
-    mcc = ((tp * tn) - (fp * fn)) / np.sqrt(mcc_denom) if mcc_denom else 0.0
-
-    return {
-        "accuracy": float(accuracy),
-        "coverage": coverage,
-        "confident_accuracy": confident_accuracy,
-        "unconfident_accuracy": unconfident_accuracy,
-        "precision": float(precision),
-        "recall": float(recall),
-        "f1": float(f1),
-        "mcc": float(mcc),
-        "confusion": {
-            "tp": tp,
-            "tn": tn,
-            "fp": fp,
-            "fn": fn,
-            "total": total,
-        },
-    }
-
-
-def _compute_score_calibration(y_true, y_score):
-    y_true = y_true.astype(bool)
-    y_score = y_score.astype(float)
-    threshold, y_pred = _best_threshold(y_true, y_score)
-    metrics = _compute_score_threshold_metrics(
-        y_true,
-        y_score,
-        threshold=threshold,
-        threshold_source="best_f1_on_evaluation",
-    )
-
-    order = np.argsort(-y_score)
-    sorted_true = y_true[order].astype(int)
-    positives = int(sorted_true.sum())
-    if positives == 0:
-        ap = 0.0
-    else:
-        cumulative_tp = np.cumsum(sorted_true)
-        precision_at_k = cumulative_tp / (np.arange(len(sorted_true)) + 1)
-        ap = float((precision_at_k * sorted_true).sum() / positives)
-    metrics["ap"] = float(ap)
-    return metrics
-
-
-def _compute_score_threshold_metrics(y_true, y_score, *, threshold, threshold_source):
-    y_true = y_true.astype(bool)
-    y_score = y_score.astype(float)
-    y_pred = y_score >= threshold
-
-    tp = int(np.sum(y_true & y_pred))
-    tn = int(np.sum(~y_true & ~y_pred))
-    fp = int(np.sum(~y_true & y_pred))
-    fn = int(np.sum(y_true & ~y_pred))
-    total = int(len(y_true))
-
-    accuracy = (tp + tn) / total if total else 0.0
-    precision = tp / (tp + fp) if (tp + fp) else 0.0
-    recall = tp / (tp + fn) if (tp + fn) else 0.0
-    f1 = (
-        (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
-    )
-    mcc_denom = float((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
-    mcc = ((tp * tn) - (fp * fn)) / np.sqrt(mcc_denom) if mcc_denom else 0.0
-
-    return {
-        "mcc": float(mcc),
-        "accuracy": float(accuracy),
-        "precision": float(precision),
-        "recall": float(recall),
-        "f1": float(f1),
-        "threshold": float(threshold),
-        "threshold_source": threshold_source,
-        "confusion": {
-            "tp": tp,
-            "tn": tn,
-            "fp": fp,
-            "fn": fn,
-            "total": total,
-        },
-    }
-
-
-def _best_threshold(y_true, y_score):
-    if len(y_true) == 0:
-        return 0.5, np.zeros(0, dtype=bool)
-
-    order = np.argsort(-y_score, kind="mergesort")
-    sorted_scores = y_score[order]
-    sorted_true = y_true[order].astype(bool)
-
-    positives = int(sorted_true.sum())
-    if positives == 0:
-        return float(sorted_scores[0]) if len(sorted_scores) else 0.5, np.zeros(
-            len(y_true), dtype=bool
-        )
-
-    tp_cum = np.cumsum(sorted_true)
-    fp_cum = np.cumsum(~sorted_true)
-    precision = tp_cum / np.maximum(tp_cum + fp_cum, 1)
-    recall = tp_cum / positives
-    f1 = np.divide(
-        2 * precision * recall,
-        precision + recall,
-        out=np.zeros_like(precision, dtype=float),
-        where=(precision + recall) != 0,
-    )
-
-    best_idx = int(np.argmax(f1))
-    threshold = float(sorted_scores[best_idx])
-    y_pred = y_score >= threshold
-    return threshold, y_pred
 
 
 def _flatten_metrics(prefix, value, out):
@@ -371,6 +389,40 @@ def save_run_metrics_summary(run_dir):
     return summary_json, summary_csv
 
 
+def _valid_template_values(values) -> set[str]:
+    return {
+        str(value)
+        for value in values
+        if not pd.isna(value) and str(value).strip() and str(value) != "<NA>"
+    }
+
+
+def load_template_library(path: str | Path | None) -> set[str]:
+    if path is None or str(path).strip() == "":
+        return set()
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"Template library not found: {path}")
+
+    if path.suffix == ".pkl":
+        with path.open("rb") as handle:
+            values = pickle.load(handle)
+        if isinstance(values, dict):
+            values = values.keys()
+        return _valid_template_values(values)
+
+    if path.suffix == ".csv":
+        frame = pd.read_csv(path)
+        if "template" in frame:
+            return _valid_template_values(frame["template"])
+        if frame.shape[1] == 0:
+            return set()
+        return _valid_template_values(frame.iloc[:, 0])
+
+    with path.open() as handle:
+        return _valid_template_values(line.strip() for line in handle)
+
+
 def main(
     gpu="cuda:0",
     batch_size=20,
@@ -383,8 +435,13 @@ def main(
     val_fraction=0.1,
     test_fraction=0.1,
     checkpoint=None,
+    template_library=None,
+    eequaam_chunk_size=100,
+    eequaam_base_timeout_seconds=30.0,
+    eequaam_timeout_seconds_per_reaction=5.0,
 ):
-    device = torch.device(gpu) if torch.cuda.is_available() else torch.device("cpu")
+    set_global_seed(seed)
+    device = resolve_device(gpu)
     print(
         "Testing with device %s, dataset %s, split %s, iteration %s"
         % (device, dataset, split, iteration)
@@ -408,12 +465,17 @@ def main(
         seed=seed,
         include_labels=False,
     )
+    print(
+        "Evaluation split %s has %d reactions after LocalMapper dataset filters"
+        % (split, len(test_loader.dataset))
+    )
     mapper_model = load_test_model(
         node_featurizer, edge_featurizer, mol_to_graph, device, model_path
     )
     accepted_templates = verified_templates(
         ROOT, dataset, model, seed, through_iteration=iteration
     )
+    accepted_templates.update(load_template_library(template_library))
     metrics = write_predictions(
         output_path,
         metrics_path,
@@ -421,30 +483,24 @@ def main(
         mapper_model,
         test_loader,
         try_twice,
+        int(eequaam_chunk_size),
+        float(eequaam_base_timeout_seconds),
+        float(eequaam_timeout_seconds_per_reaction),
     )
     summary_json, summary_csv = save_run_metrics_summary(
         output_dir(ROOT, dataset, model, seed)
     )
     print(
-        "AAM {equivalence_backend} EquivExact: {equiv_exact_match_accuracy:.4f}, AtomAcc: {atom_accuracy:.4f}, RawExact: {raw_exact_match_accuracy:.4f}, Invalid: {invalid_mapping_count}/{total}".format(
+        "AAM {equivalence_backend} StrictEquivExact: {strict_equiv_exact_match_accuracy:.4f}, EvaluableExact: {evaluable_accuracy:.4f}, AtomAcc: {atom_accuracy:.4f}, RawExact: {raw_exact_match_accuracy:.4f}, Invalid: {invalid_mapping_count}/{predicted_count}".format(
             **metrics["aam"]
         )
     )
     print(
-        "Score calibration: AP: {ap:.4f}, MCC: {mcc:.4f}, Accuracy: {accuracy:.4f}, F1: {f1:.4f}".format(
-            **metrics["score_calibration"]
+        "EEquAAM denominator: predicted={predicted_count}, evaluable={evaluable_count}, unevaluable={unevaluable_count}, failed={eequaam_failed_count}".format(
+            **metrics["aam"]
         )
     )
-    print(
-        "Uncalibrated score@0.5: MCC: {mcc:.4f}, Accuracy: {accuracy:.4f}, F1: {f1:.4f}".format(
-            **metrics["score_uncalibrated"]
-        )
-    )
-    print(
-        "Template confidence: Coverage: {coverage:.4f}, ConfAcc: {confident_accuracy:.4f}, UnconfAcc: {unconfident_accuracy:.4f}, MCC: {mcc:.4f}".format(
-            **metrics["template_confidence"]
-        )
-    )
+    print(f"EEquAAM statuses: {metrics['aam']['eequaam_status_counts']}")
     print(f"Saved predictions to {output_path}")
     print(f"Saved metrics to {metrics_path}")
     print(f"Saved run metrics summary to {summary_csv} and {summary_json}")

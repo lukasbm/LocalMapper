@@ -159,6 +159,20 @@ def clean_reactant_map(rxn):
     return ">>".join([r, p])
 
 
+def demap_reaction(rxn: str) -> str | None:
+    if not _valid_rxn(rxn):
+        return None
+    demapped = []
+    for smi in rxn.split(">>"):
+        mol = Chem.MolFromSmiles(smi)
+        if mol is None:
+            return None
+        for atom in mol.GetAtoms():
+            atom.SetAtomMapNum(0)
+        demapped.append(Chem.MolToSmiles(mol, canonical=False, isomericSmiles=True))
+    return ">>".join(demapped)
+
+
 def canonicalize_map_rxn(rxn):
     new_rxn = []
     for smi in rxn.split(">>"):
@@ -198,7 +212,7 @@ def cgrtools_available() -> bool:
 
 
 def mapping_comparison_backend() -> str:
-    return "cgrtools"
+    return os.environ.get("LOCALMAPPER_AAM_BACKEND", "eequaam_its")
 
 
 def _cgr_signature_direct(rxn: str) -> str | None:
@@ -399,11 +413,13 @@ class ReactionDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, item):
         data = self.items[item]
-        rxn = data["rxn"]
+        rxn = data["rxn"] if self.include_labels else demap_reaction(data["rxn"])
+        if rxn is None:
+            raise ValueError(f"Could not demap reaction for inference item: {data['id']}")
         r, p = rxn.split(">>")
         rgraph = self.mol_to_graph(Chem.MolFromSmiles(r))
         pgraph = self.mol_to_graph(Chem.MolFromSmiles(p))
-        label = get_mapping_label(rxn) if self.include_labels else []
+        label = get_mapping_label(data["rxn"]) if self.include_labels else []
         if self.include_labels and label is None:
             raise ValueError(f"Invalid mapped reaction for training item: {data['id']}")
         return data["id"], rxn, rgraph, pgraph, label, data.get("weight", 1.0), data
@@ -707,6 +723,20 @@ def select_split(
     max_candidates: int | None = None,
 ) -> list[dict[str, Any]]:
     split = split.lower()
+    if split in {"all", "combined", "eval_all"}:
+        selected = [
+            item if item["split"] is not None else {**item, "split": "all"}
+            for item in items
+        ]
+        if max_candidates is not None and len(selected) > max_candidates:
+            rng = np.random.default_rng(seed)
+            selected_order = rng.permutation(len(selected))[:max_candidates]
+            selected = [selected[i] for i in selected_order]
+        return normalize_item_targets(
+            selected,
+            progress_desc=f"Filtering {split} mappings",
+        )
+
     explicit = [item for item in items if item["split"] == split]
     if explicit:
         return normalize_item_targets(

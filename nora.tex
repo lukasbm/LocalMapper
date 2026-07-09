@@ -1,0 +1,286 @@
+
+\documentclass[a4paper,12pt]{article} % Dokumentenklasse
+
+% --- Pakete ---
+\usepackage[utf8]{inputenc}   % UTF-8 Zeichenkodierung
+\usepackage[T1]{fontenc}      % Schriftkodierung
+\usepackage{graphicx}         % Bilder einfügen
+%\usepackage{hyperref}         % Hyperlinks
+\usepackage{amsmath, amssymb} % Mathematische Symbole
+\usepackage{float}   % nur wenn du [H] willst
+\usepackage[backend=biber,style=numeric]{biblatex}
+\usepackage{array}
+\usepackage{subcaption}
+\addbibresource{literature.bib}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage[most]{tcolorbox}
+\usepackage{multirow}
+
+
+\newcommand\todo[1]{\textcolor{red}{#1}}
+
+\begin{document}
+\title{BIERMAPPER}
+\section{Abstract}
+\section{Intoduction}
+
+Atom-to-atom mappings (AAMs) are important in metabolic research because they provide an explicit correspondence of atoms between substrates and products, allowing biochemical transformations to be described at a mechanistic level. This makes it possible to consistently track how atoms are rearranged across metabolic reactions, supporting pathway reconstruction, comparison of enzymatic transformations, and the analysis of reaction mechanisms in complex metabolic networks.
+
+The first ML-based atom-to-atom mapping system, the RXNMapper \cite{schwaller2021rxnmapper}, was trained directly on SMILES representations, leveraging transformer-style language models to learn mapping patterns from large reaction datasets. More recent approaches, such as Graphormer or LocalMapper, have moved beyond linear string encodings and operate on molecular graphs, allowing them to incorporate structural and topological information more explicitly. Despite these architectural advances, reported accuracy, particularly for complex biochemical or enzymatic reactions, remains limited in some cases, as highlighted, for example, in \cite{SynTemp:2025}, where performance drops are observed for biochemistry-focused datasets.
+
+RXNMapper, in particular, has seen broad adoption across the cheminformatics and computational chemistry communities. It is widely used in reaction preprocessing pipelines, dataset curation workflows, and benchmarking studies. This makes it one of the most commonly referenced neural atom-mapping tools to date. Given the high error rate, particularly in enzymatic reactions, there is a strong motivation to find new methods that are better able to accurately map such atom-to-atom maps.
+
+In this study, we introduce a new approach that differs from existing mapping methods by not training neural networks to learn AAMs directly, but instead by selecting the correct mapping from a predefined set of possible mappings. This formulation we called BRMapper seems to be beneficial as it limits the solution space to chemically meaningful atom-to-atom mappings. Instead of learning mappings from scratch, the model is required to select among plausible candidates, which reduces complexity and mitigates the risk of chemically invalid predictions.
+
+The AAMs provided to the BRMapper (AAM options) are created generically in advance. A common assumption in chemical reaction theory is that most reactions follow pathways that minimize the number of bond-breaking and bond-forming events \cite{Grambow:20}. In line with the Principle of Least Structural Change, reaction mechanisms are therefore expected to preserve as much of the original bonding pattern as possible, while limiting structural rearrangements to those strictly required for the transformation. Based on this assumption, multiple atom-to-atom map options were generated, favoring solutions with minimal changes in bonding. However, this is not a universal rule, and there are plenty of examples, especially in enzymatic multiple-step reactions, where the minimum bond change does not reflect the reaction mechanism, but rather sub-optimal solutions that require one or two additional bond changes. Therefore, this application generates not only absolute minimum solutions, but also obvious minimum solutions for bond changes. Such a relationship can be seen in Figure \ref{fig:edgechange}. 
+
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.8\linewidth]{pictures/edge_changes.png}
+	\caption{The following example demonstrates that the assumption of minimizing bond-breaking and bond-forming events does not necessarily yield an accurate representation of the true reaction mechanism. The upper atom-to-atom mapping (AAM), which reflects the experimentally or mechanistically correct pathway, involves the cleavage of two heavy-atom bonds and the formation of two new ones. However, when the Principle of Least Structural Change is applied, the resulting optimal mapping, shown below, is characterized by only a single heavy-atom bond being broken and formed.}
+	\label{fig:edgechange}
+\end{figure}
+
+On this background, we use the concept of the Maximum Common Edge Subgraph (MCES) to generate AAM options. Given two molecular graphs, MCES seeks the largest subgraph, measured by the number of edges, that is isomorphic between the graphs. Formally, an MCES corresponds to a pair of edge-induced subgraphs that are isomorphic and share the maximum possible number of edges. In the context of molecular graphs, this entails identifying the largest set of bonds that can be consistently matched between reactants and products.
+
+Each MCES solution induces a structurally consistent atom-to-atom correspondence, which can be interpreted as a valid candidate mapping. By constructing candidate mappings exclusively from MCES solutions, the approach enforces both graph-theoretical and chemical constraints (such as mass conservation) at the candidate generation stage. Consequently, the learning task is reduced to selecting the most appropriate mapping from a set of structurally well-defined alternatives, rather than generating mappings without explicit structural guarantees.
+	
+In this work, we investigate how this approach can improve AAM predictions for enzymatic reactions. To this end, we first evaluate the method on a highly specialized dataset of enzymatic ring-closure and ring-elimination reactions, which are known to present significant challenges for existing AAM approaches. We then extend our analysis to a larger and more comprehensive dataset encompassing a broad range of enzymatic reactions, allowing us to assess the general applicability of the proposed method.	
+	
+\section{Methods}	
+
+\subsection{Datasets}
+
+\paragraph{MetamDB dataset}
+
+MetAMDB is a large-scale database of metabolic reactions containing approximately 43,000 biochemically relevant transformations collected from sources such as KEGG, MetaCyc, and BRENDA. A key feature is the inclusion of AAMs. These mappings provide broad coverage but vary in quality and may contain inaccuracies, particularly for complex enzymatic transformations and rearrangement reactions. In this work, we exclusively use reactions whose AAMs are explicitly marked as validated within MetAMDB. This filtering ensures a high-confidence dataset and reduces the risk of propagating mapping errors into model training and evaluation. By restricting the data to validated AAMs only, we aim to improve the reliability and consistency of the reaction representations used in our study. This resulted in a total of 10,579 reactions. After applying additional filtering to remove overly complex reactions, the final dataset consists of 4,456 reactions.
+
+\paragraph{Ring Reactions dataset}
+
+The ring reaction AAMs were obtained from the dataset of validated reactions provided by MetAMDB \cite{MetAMDB}. Based on these data sets, ring reactions were systematically extracted. Here, ring reactions refer to transformations where a ring structure forms or is cleaved within the reaction core. Only three-, four-, five-, and six-membered rings were included. Applying these criteria yielded 1,247 reactions that met the definition of ring reactions. The distribution across ring sizes is relatively balanced, with a slight predominance of larger rings: cyclopropane reactions account for 22\% of the dataset, cyclobutane reactions for 22\%, cyclopentane reactions for 25\%, and cyclohexane reactions for 31\%. Many extracted reactions were stoichiometrically unbalanced and incompatible with our workflow. Removing them left 884 balanced ring reactions for further analysis. These reactions were clustered by underlying mechanisms. SynKit \cite{synkit}, a tool for structure- and transformation-based grouping, facilitated this process. The results showed high mechanistic diversity: 443 distinct mechanisms were identified, many of which appeared only once in the dataset. To ensure statistical robustness in subsequent analyses, only clusters containing more than nine examples were retained. This filtering step reduced the dataset to 225 reactions, representing frequently occurring ring-forming and ring-opening mechanisms within the studied reaction class.
+
+\bigskip
+All AAMs in the datasets are provided in SMILES representation. For the generation of AAM options, these SMILES strings are converted into their corresponding graph representations. This transformation offers several advantages. In particular, it allows additional properties to be assigned to each individual atom, which can subsequently be used as informative features for learning and distinguishing reaction mechanisms. The molecular graphs are constructed and annotated using RDKit \cite{rdkit}. During this process, atom-level attributes are automatically extracted and assigned to each graph node. The following table summarizes all atomic features that were automatically generated and used in our study:
+
+\begin{table}[H]
+	\centering
+	
+	\begin{tcolorbox}[colback=white, colframe=black!40, boxrule=0.6pt, arc=2mm, left=0.5mm, right=0.2mm, top=2mm, bottom=2mm]
+		
+		\renewcommand{\arraystretch}{1.25}
+		\setlength{\tabcolsep}{8pt}
+		
+		\begin{tabular}{
+				>{\raggedright\arraybackslash}p{3.8cm}
+				>{\raggedright\arraybackslash}p{8cm}
+			}
+			
+			\multicolumn{2}{c}{\textbf{Node Attributes (Atom-Level Features)}} \\
+			\midrule
+			
+			\textbf{Attribute} & \textbf{Description} \\
+			\midrule
+			
+			Element Number & Atomic number defining the chemical element identity \\
+			
+			Heavy Atom Neighbors & Number of directly bonded non-hydrogen atoms \\
+			
+			Formal Charge & Formal charge assigned to the atom in the molecular graph \\
+			
+			Hybridization & Orbital hybridization state (e.g., sp, sp$^2$, sp$^3$) \\
+			
+			Explicit Valence & Number of explicitly represented bonds \\
+			
+			Ring Membership & Binary indicator specifying whether the atom is part of a ring system \\
+			
+			Aromaticity & Binary indicator specifying whether the atom is aromatic \\
+			
+			Atomic Mass & Standard atomic mass of the element \\
+			
+			Van der Waals Radius & Van der Waals radius approximating steric size \\
+			
+			Covalent Radius & Covalent bonding radius \\
+			
+			Chirality & Encoded stereochemical configuration (e.g., R/S or chiral tag) \\
+			
+			Hydrogen Count & Total number of bonded hydrogen atoms (implicit and explicit) \\
+			
+			\midrule
+			\multicolumn{2}{c}{\textbf{Edge Attributes (Bond-Level Features)}} \\
+			\midrule
+			
+			\textbf{Attribute} & \textbf{Description} \\
+			\midrule
+			
+			Bond Order & Bond multiplicity (e.g., single, double, triple, aromatic) \\
+			
+			Conjugation & Binary indicator specifying whether the bond is conjugated \\
+			
+			Ring Membership & Binary indicator specifying whether the bond is part of a ring system \\
+			
+		\end{tabular}
+		
+	\end{tcolorbox}
+	
+	\caption{Graph-based structural attributes used to represent atoms (nodes) and bonds (edges) in molecular reaction graphs.}
+	\label{tab:Graph_Attributes}
+	
+\end{table}
+
+\subsection{Generation of Atom-to-Atom-Maps Options}
+
+To generate atom-to-atom mapping options, we build a workflow to find the best set of options for a Maximum Common Edge Subgraph (MCES), defined as the largest subgraph shared by two graphs in terms of the number of edges.  On this basis, possible atom-to-atom maps can then be generated by enumerating all possible alignments of the atoms located outside the MCES.
+
+To generate such MCES, a highly efficient branch-and-bound algorithm for solving the Maximum Common Subgraph (MCS) problem was applied. The algorithm is based on the approach described as McSplit by \cite{McCreesh2017}, as presented in the corresponding publication. The main idea of this framework is to represent molecular structures as graphs and to construct mappings incrementally by systematically exploring correspondences between vertices (atoms) of the two graphs. The algorithm employs a branch-and-bound strategy: at each step, a partial mapping is extended, and an upper bound on the size of any possible extension is computed. If this bound cannot exceed the size of the best solution found so far, the corresponding branch of the search tree is pruned, significantly reducing the computational effort. Additionally, \emph{McSplit} introduces the concept of \emph{label classes}, which group vertices based on their adjacency relationships with already-matched vertices. By restricting matches to the same label class, the algorithm efficiently narrows the search space while ensuring that all chemically feasible mappings are considered. To further improve performance, hydrogen atoms are removed from the graphs before the search and reintroduced afterwards, reducing memory usage and allowing fast refinement of candidate sets as the mapping grows. Overall, this method provides a highly efficient and scalable approach to computing atom-to-atom mappings for large and complex molecular graphs.
+
+Since the objective is to identify Maximum Common Edge Subgraphs (MCES), but McSplit was developed for MCS, the algorithm's input molecular graphs were first transformed into line graphs. In a line graph, each vertex corresponds to an edge (bond) of the original molecular graph, and two vertices are connected if the corresponding bonds share a common atom. So that, let $G = (V, E)$ be a simple undirected graph, where $V$ is the set of vertices (atoms) and $E \subseteq \{\{u,v\} \mid u,v \in V, u \neq v\}$ is the set of edges (bonds). The \emph{line graph} of $G$, denoted by $L(G) = (V_L, E_L)$, is defined as $V_L := E$ and \[E_L := \bigl\{ \{e_1, e_2\} \subseteq V_L \;\big|\; e_1 \cap e_2 \neq \emptyset \bigr\}.\] For a molecular graph $G$ with atoms as vertices and bonds as edges, the line graph $L(G)$ represents bonds as vertices, and two bonds are connected if they share a common atom. This transformation allows the Maximum Common Edge Subgraph (MCES) problem to be solved also by the McSplit algorithm. A schematic overview of the workflow is given in Figure \ref{fig:mcsplit}.
+
+\begin{figure}[h!]
+	\includegraphics[width=0.9\linewidth]{pictures/Suboptimal_workflow.png}
+	\caption{Overview of the generation of atom-to-atom map options. The reactions originally noted in SMILES are translated into molecular graphs. Hydrogen atoms are neglected in this process. These are then converted into line graphs. The node color indicates different bond labels. White nodes indicate a single bond, and blue nodes indicate a double bond. The branch-and-bound algorithm is then used to search for the MCES and its suboptimal solutions in the line graphs of both reaction sides. Light gray nodes indicate which nodes do not belong to the MCES.}
+	\label{fig:mcsplit}
+\end{figure}
+
+\todo{Thomas: Filter noch einbauen}
+
+
+
+\subsection{Imaginary Transition States}
+
+The graph representations of the AAM options considered in this work are based on the concept of the Imaginary Transition State (ITS) introduced by Shinsaku Fujita \cite{Fujita1986}. The ITS is a graph-based representation that combines the reactant and product molecular graphs through an atom-to-atom mapping. In the ITS, atoms are preserved while edges encode the bond states before and after the reaction, thereby explicitly representing bond formation, bond cleavage, and bond order changes within a single graph. Consequently, the ITS provides a compact description of the reaction mechanism and serves as an auxiliary graph that uniquely characterizes the underlying atom mapping.
+
+In our study, we investigated different ITS representations of the AAM options. First, we considered a complete ITS representation comprising the entire reaction graph (Kn). To determine whether unchanged parts of the reaction introduce noise during the learning process, we additionally evaluated reduced ITS representations containing only a subset of the reaction graph. The only requirement imposed on these reduced representations is that all bond changes, i.e., the reaction core, are retained. The variable parameter is the radius of neighboring atoms included around the atoms involved in bond changes. Specifically, we investigated ITS variants containing neighboring atoms located within one bond (K1), two bonds (K2), and three bonds (K3) from the reaction core. Thus, a K3 ITS contains all atoms and bonds whose shortest graph distance from the reaction core is at most three bonds. Examples of these ITS variants are shown in Figure \ref{fig:its}.
+
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.9\linewidth]{pictures/ITS_Examples.jpg}
+	\caption{Example of different ITS graphs derived from a chemical reaction. The numbering of the AAM refers to the bijection defined by the atom-to-atom mapping. This yields an ITS graph representing the entire reaction (Kn). The red edge labels indicate bonds that change during the reaction. ‘O’ denotes a non-existent bond, while ‘–’ represents a single bond. When the reaction is reduced to its mechanistic core, the ITS graphs K3, K2, and K1 are obtained, each corresponding to a different radius of neighboring atoms included around the reaction mechanism.}
+	\label{fig:its}
+\end{figure}
+
+\subsection{Machine Learning Approach}
+In this study, six complementary machine learning architectures were systematically evaluated to identify the most suitable modeling approach. The comparison included three graph neural network (GNN) models:Graph Isomorphism Network (GIN)\cite{xu2018how}, Graph Attention Network (GAT)(\cite{brody2022attentivegraphattentionnetworks}), and GraphSAGE (\cite{NIPS2017_5dd9db5e}). Alongside three graph kernel–based methods: Neighborhood Hash (NH) (\cite{NH_ML}), Neighborhood Subgraph Pairwise Distance (NSPD) (\cite{NSPD_ML}), and Weisfeiler–Lehman Optimal Assignment (WL-OA) (\cite{Kriege2016OnVO}). The selected GNN models represent modern message-passing frameworks with differing aggregation and weighting strategies, while the kernel methods provide structure-driven similarity measures based on explicit subgraph and neighborhood feature extraction. This combination enables a balanced assessment across both learned representation models and classical graph similarity techniques. GIN is designed to achieve high discriminative power by closely matching the expressive capability of the Weisfeiler–Lehman test through learnable aggregation functions. GAT extends message passing with attention mechanisms that assign adaptive weights to neighboring nodes, enabling the model to focus on more informative local structures. GraphSAGE uses inductive neighborhood sampling and aggregation, allowing scalable learning and generalization to unseen graphs. In contrast, NH, NSPD, and WL-OA are kernel-based methods that compute graph similarity through explicit structural feature extraction rather than end-to-end representation learning: NH relies on hashed neighborhood descriptors, NSPD captures relationships between pairs of subgraphs at varying sizes, and WL-OA combines Weisfeiler–Lehman subtree features with an optimal assignment matching scheme.
+
+Each dataset was split into 80\% for training and 20\% for testing stratified based on reaction mechanism. Then, datasets were converted into TU-format graph datasets compatible with PyTorch Geometric. This used a modified version of the pipeline (\cite{TUDataset}). A dedicated hyperparameter optimization procedure was conducted for all evaluated models to ensure a fair and well-calibrated comparison. Therefore, a Tree-structured Parzen Estimator (TPE) algorithm (\cite{NIPS2011_86e8f7ab}) was executed for 100 iterations. For the graph neural networks (GIN, GAT, and GraphSAGE), hyperparameters were optimized using 80\% of the training dataset and evaluating on remaining 20\%. In contrast, for the graph kernel-SVM models (NH, NSPD, WL-OA), optimization was performed on a majority-class–undersampled subset of the training data. This undersampling step was required because kernel methods rely on a Gram matrix whose size grows quadratically with the number of training instances and would otherwise become computationally prohibitive. During model selection for the GNN architectures, different graph-level readout functions were compared. For GIN and GAT, sum aggregation produced the best validation performance. However, since sum readout is not invariant to graph size and can introduce bias toward larger graphs, it is generally not the most robust default choice; in many practical settings, max aggregation yields more stable behavior. Therefore, fixing the readout function rather than treating it as a tunable hyperparameter may be preferable in future optimization runs.
+
+After hyperparameter tuning, the final models were retrained with the selected configurations on the training split and evaluated on the held-out test set. Test-set performance metrics were then computed and analyzed for the final comparison. Finally, the atom-to-atom mapping option with the highest prediction score was selected. This mapping was then used to evaluate the accuracy of BRMapper.
+
+
+\subsection{Benchmarking}
+
+\paragraph{RXNMapper}
+
+Unfortunately, we were not able to retrain RXNMapper on our dataset, as this functionality is not publicly available. Therefore, all comparisons were conducted using atom-to-atom mappings generated by RXNMapper (version 0.4.2) \cite{schwaller2021rxnmapper} on our datasets, after removing the original ground-truth mappings prior to prediction. Accuracy was then computed using the EEquAAM tool \cite{Laffitte:2023}, which enables systematic comparison of atom mappings. The resulting RXNMapper predictions were finally evaluated against the original ground-truth dataset to determine the mapping accuracy.
+
+\paragraph{Graphormer}
+\todo{Lukas}
+\paragraph{LocalMapper}
+\todo{Lukas}
+
+\section{Results}
+
+\subsection{Limitations of Suboptimal Generation}
+
+Quelle für das Berechnungsproblem: https://pubs.acs.org/doi/10.1021/acs.jcim.4c01871
+
+\subsection{Hyperparameter Optimization}
+
+\begin{figure}[H]
+	\centering
+
+	\includegraphics[width=\textwidth]{pictures/Optimzation.jpg}
+		\label{fig:bild1}
+	\caption{\textbf{Results of the Hyperparameter Optimization. Right}: GNN optimization parameters, value ranges and best obtained model configurations. Run for 100
+		iterations with the Tree-structured Parzen Estimator (TPE) algorithm on a 80\%-20\% train-validation split on the training set for 100 Epochs with batch size 1024.
+		\textbf{Left}:Graph kernel optimization parameters, value ranges and best obtained model configurations
+		with maximizing AP as optimization objective. With dataset majority class undersampling to a ratio of
+		0.1 and performance taken from the median of 5 runs.
+	}
+	\label{fig:nebeneinander}
+\end{figure}
+
+\subsection{Accuracy and Benchmarking}
+
+The performance of the different machine learning architectures was evaluated on the test dataset (tab. \ref{tab:GNNs Accuracy}). For each architecture, 20 independent runs were performed, and the reported accuracy is the average across these runs. The accuracy was calculated as follows: for each reaction, the atom-to-atom map prediction with the highest score was selected. The accuracy is then calculated as the percentage of responses in which this selection showed the correct AAM.
+
+\begin{table}[H]
+	\centering
+	
+	\begin{tcolorbox}[
+		colback=white,
+		colframe=black!40,
+		boxrule=0.6pt,
+		arc=2mm,
+		left=2mm,
+		right=2mm,
+		top=2mm,
+		bottom=2mm,
+		enhanced
+		]
+		
+		\resizebox{\textwidth}{!}{%
+			\begin{tabular}{lcccccc}
+				& \multicolumn{3}{c}{Graph Kernels} & \multicolumn{3}{c}{GNNs} \\
+				\cmidrule(r){2-4}\cmidrule(l){5-7}
+				Dataset & WL-OA & NSPD & NH & GAT & GIN & GraphSAGE \\
+				\midrule
+				ringreactions      & \textbf{86.70} & 55.42 & 85.06 & 69.06 & 67.05 & 77.45 \\
+				ringreactions\_k1  & 84.26 & 57.89 & \textbf{84.97} & 75.24 & 67.27 & 72.41 \\
+				ringreactions\_k2  & 83.20 & \textbf{97.66} & 85.27 & 84.79 & 76.45 & 83.39 \\
+				ringreactions\_k3  & 84.53 & 67.29 & \textbf{87.88} & 78.62 & 74.96 & 81.78 \\
+				\midrule		
+				Metamdb            & 92.85 & 79.09 & 88.31 & 92.22 & 92.81 & \textbf{93.69} \\
+				Metamdb\_k1        & \textbf{84.44} & 80.06 & 81.62 & 83.25 & 74.55 & 83.46 \\
+				Metamdb\_k2        & 88.00 & 84.24 & 84.00 & 88.12 & 82.80 & \textbf{89.96} \\
+				Metamdb\_k3        & 90.47 & 84.40 & 87.44 & 89.59 & 88.54 & \textbf{91.95} \\
+			\end{tabular}%
+		}
+		
+	\end{tcolorbox}
+	
+	\caption{Average accuracy of different models over 20 runs in percent. The evaluation was conducted on the Ring Reaction dataset and the MetaMDb dataset. Different representations of the ITS graphs were provided as input to the models, including full reaction ITS graphs (k), and subgraphs with increasing neighborhood radius (k1–k3). The highest total accuracy for each dataset is highlighted in bold.}
+	\label{tab:GNNs Accuracy}
+\end{table}
+
+%Among the tested architectures, NH achieved the best performance, with an average accuracy of 87.50\%, followed by WL-OA at 86.66\% and NSPD at 85.00\%. The GAT achieved an accuracy of 74.72\%, while GIN reached 72.22\%. The lowest performance among the evaluated graph kernels was observed for GraphSAGE, which achieved an average accuracy of only 67.22\%.
+
+%\begin{figure}[H]
+%	\includegraphics[width=\linewidth]{pictures/BRMapper_accuracy.png}
+%	\caption{Performance comparison of different machine learning architectures of the BRMapper. The reported accuracies correspond to the average results of 10 independent runs on the test dataset. For each reaction, the prediction with the highest score was selected and evaluated for correctness. The exact values for each sample are listed in the table below the plot.}
+%	\label{fig:brmapper_results}
+%\end{figure}
+
+To benchmark the BRMapper against other common machine learning-based Mappers, RXNMapper, Graphormer, and the LocalMapper were evaluated (Fig.\ref{fig:bench_combined}). 
+
+For the RXNMapper Test, only 177 ring reactions in the test dataset could be tested. The other reactions were filtered out due to errors in the AAM generation by RXNMapper. As a result, the analysis shows that the RXNMapper achieves an accuracy of 39.55\%.
+
+%For Graphormer, different training strategies were compared. Without additional training, Graphormer achieved an accuracy of 61.67\%. When the model was pretrained using the additional rinf reaction train dataset, the accuracy on the test dataset was 61.13\%. In contrast, training the model exclusively on the RingReaction dataset yielded an accuracy of 46.89\%.
+
+%A similar evaluation was performed for LocalMapper. Without retraining, the model achieved an accuracy of 47.44\%. Pretraining on the additional training dataset significantly improved performance, achieving an accuracy of 72.62\%. When trained only on the RingReaction dataset, LocalMapper achieved an accuracy of 66.80%.
+
+
+%\begin{figure}[H]
+%	\centering
+%	\begin{minipage}[t]{0.45\textwidth}
+%		\centering
+%		\textbf{Unretrained Benchmark} \\[1ex]
+%		\includegraphics[width=\linewidth]{pictures/benchmark_notRetrained.png}
+%	\end{minipage}
+%	\hfill
+%	\begin{minipage}[t]{0.52\textwidth}
+%		\centering
+%		\textbf{Retrained Benchmark} \\[1ex]
+%		\includegraphics[width=\linewidth]{pictures/benchmark_Retrained.png}
+%	\end{minipage}
+%	\caption{Benchmark performance of all common maschine learning based Atom-to-Atom Mapper. The left panel shows the results of the pretrained models. The right panel compares models retrained on the RingReaction dataset (RR) and models pretrained on the combined USPTO50K + RR dataset.}
+%	\label{fig:bench_combined}
+%\end{figure}
+
+
+
+\section{Conclusions}
+
+
+\printbibliography	
+\end{document}

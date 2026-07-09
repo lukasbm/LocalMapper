@@ -13,10 +13,12 @@ MODEL="${MODEL:-LocalMapper_${INIT_MODE}_${RUN_ID}}"
 SEED="${SEED:-0}"
 GPU="${GPU:-cuda:0}"
 PRETRAINED_CHECKPOINT="${PRETRAINED_CHECKPOINT:-data/checkpoints/LocalMapper_202403.pth}"
+TEMPLATE_LIBRARY="${TEMPLATE_LIBRARY:-}"
 SAMPLE_LIMIT="${SAMPLE_LIMIT:-200}"
 SAMPLE_CANDIDATE_FACTOR="${SAMPLE_CANDIDATE_FACTOR:-20}"
 ITERATIONS="${ITERATIONS:-5}"
-SPLIT="${SPLIT:-train}"
+TRAIN_SPLIT="${TRAIN_SPLIT:-${SPLIT:-train}}"
+EVAL_SPLIT="${EVAL_SPLIT:-test}"
 BATCH_SIZE="${BATCH_SIZE:-16}"
 NUM_EPOCHS="${NUM_EPOCHS:-100}"
 PATIENCE="${PATIENCE:-5}"
@@ -24,28 +26,30 @@ CONFIDENT_PER_TEMPLATE="${CONFIDENT_PER_TEMPLATE:-100}"
 VAL_FRACTION="${VAL_FRACTION:-0.1}"
 TEST_FRACTION="${TEST_FRACTION:-0.1}"
 BUDGET_LABEL="${BUDGET_LABEL:-}"
-MPLCONFIGDIR="${MPLCONFIGDIR:-/tmp/localmapper-mpl}"
-LOCALMAPPER_CGRTOOLS_IGNORE="${LOCALMAPPER_CGRTOOLS_IGNORE:-1}"
-LOCALMAPPER_CGR_MP_CONTEXT="${LOCALMAPPER_CGR_MP_CONTEXT:-fork}"
-LOCALMAPPER_CGR_TIMEOUT_SECONDS="${LOCALMAPPER_CGR_TIMEOUT_SECONDS:-2}"
+EEQUAAM_CHUNK_SIZE="${EEQUAAM_CHUNK_SIZE:-25}"
+EEQUAAM_BASE_TIMEOUT_SECONDS="${EEQUAAM_BASE_TIMEOUT_SECONDS:-10}"
+EEQUAAM_TIMEOUT_SECONDS_PER_REACTION="${EEQUAAM_TIMEOUT_SECONDS_PER_REACTION:-2}"
+LOCALMAPPER_TMPDIR="${LOCALMAPPER_TMPDIR:-/scratch/lukas/tmp/localmapper}"
+LOCALMAPPER_EEQUAAM_TMPDIR="${LOCALMAPPER_EEQUAAM_TMPDIR:-$LOCALMAPPER_TMPDIR/eequaam}"
+MPLCONFIGDIR="${MPLCONFIGDIR:-$LOCALMAPPER_TMPDIR/mpl}"
+LOCALMAPPER_AAM_BACKEND="${LOCALMAPPER_AAM_BACKEND:-eequaam_its}"
 export MPLCONFIGDIR
-export LOCALMAPPER_CGRTOOLS_IGNORE
-export LOCALMAPPER_CGR_MP_CONTEXT
-export LOCALMAPPER_CGR_TIMEOUT_SECONDS
-mkdir -p "$MPLCONFIGDIR"
+export LOCALMAPPER_TMPDIR
+export LOCALMAPPER_AAM_BACKEND
+export LOCALMAPPER_EEQUAAM_TMPDIR
+mkdir -p "$MPLCONFIGDIR" "$LOCALMAPPER_EEQUAAM_TMPDIR"
 
 echo "Using DATASET=${DATASET} INIT_MODE=${INIT_MODE} MODEL=${MODEL}"
-echo "Using CGRTools equivalence"
-echo "Using LOCALMAPPER_CGRTOOLS_IGNORE=${LOCALMAPPER_CGRTOOLS_IGNORE}"
-echo "Using LOCALMAPPER_CGR_MP_CONTEXT=${LOCALMAPPER_CGR_MP_CONTEXT}"
-echo "Using LOCALMAPPER_CGR_TIMEOUT_SECONDS=${LOCALMAPPER_CGR_TIMEOUT_SECONDS}"
+echo "Using TRAIN_SPLIT=${TRAIN_SPLIT} EVAL_SPLIT=${EVAL_SPLIT}"
+echo "Using AAM equivalence backend ${LOCALMAPPER_AAM_BACKEND}"
 
 "${PYTHON_CMD[@]}" -m scripts.RunMetadata \
   --dataset="$DATASET" \
   --model="$MODEL" \
   --init_mode="$INIT_MODE" \
   --seed="$SEED" \
-  --split="$SPLIT" \
+  --train_split="$TRAIN_SPLIT" \
+  --eval_split="$EVAL_SPLIT" \
   --sample_limit="$SAMPLE_LIMIT" \
   --sample_candidate_factor="$SAMPLE_CANDIDATE_FACTOR" \
   --iterations="$ITERATIONS" \
@@ -57,6 +61,10 @@ echo "Using LOCALMAPPER_CGR_TIMEOUT_SECONDS=${LOCALMAPPER_CGR_TIMEOUT_SECONDS}"
   --test_fraction="$TEST_FRACTION" \
   --gpu="$GPU" \
   --pretrained_checkpoint="$PRETRAINED_CHECKPOINT" \
+  --template_library="$TEMPLATE_LIBRARY" \
+  --eequaam_chunk_size="$EEQUAAM_CHUNK_SIZE" \
+  --eequaam_base_timeout_seconds="$EEQUAAM_BASE_TIMEOUT_SECONDS" \
+  --eequaam_timeout_seconds_per_reaction="$EEQUAAM_TIMEOUT_SECONDS_PER_REACTION" \
   --run_id="$RUN_ID" \
   --budget_label="$BUDGET_LABEL"
 
@@ -69,7 +77,7 @@ for ITERATION in $(seq 1 "$ITERATIONS"); do
     --model="$MODEL" \
     --seed="$SEED" \
     --iteration="$ITERATION" \
-    --split="$SPLIT" \
+    --split="$TRAIN_SPLIT" \
     --sample_limit="$SAMPLE_LIMIT" \
     --sample_candidate_factor="$SAMPLE_CANDIDATE_FACTOR" \
     --val_fraction="$VAL_FRACTION" \
@@ -82,7 +90,7 @@ for ITERATION in $(seq 1 "$ITERATIONS"); do
     --model="$MODEL"
     --seed="$SEED"
     --iteration="$ITERATION"
-    --split="$SPLIT"
+    --split="$TRAIN_SPLIT"
     --gpu="$GPU"
     --batch_size="$BATCH_SIZE"
     --num_epochs="$NUM_EPOCHS"
@@ -90,7 +98,7 @@ for ITERATION in $(seq 1 "$ITERATIONS"); do
     --val_fraction="$VAL_FRACTION"
     --confident_per_template="$CONFIDENT_PER_TEMPLATE"
   )
-  if [[ "$INIT_MODE" == "pretrained" && "$ITERATION" == "1" ]]; then
+  if [[ ( "$INIT_MODE" == "finetune" || "$INIT_MODE" == "pretrained" ) && "$ITERATION" == "1" ]]; then
     TRAIN_ARGS+=(--init=checkpoint --checkpoint="$PRETRAINED_CHECKPOINT")
   else
     TRAIN_ARGS+=(--init=auto)
@@ -103,9 +111,13 @@ for ITERATION in $(seq 1 "$ITERATIONS"); do
     --model="$MODEL" \
     --seed="$SEED" \
     --iteration="$ITERATION" \
-    --split="$SPLIT" \
+    --split="$EVAL_SPLIT" \
     --gpu="$GPU" \
     --batch_size="$BATCH_SIZE" \
     --val_fraction="$VAL_FRACTION" \
-    --test_fraction="$TEST_FRACTION"
+    --test_fraction="$TEST_FRACTION" \
+    --template_library="$TEMPLATE_LIBRARY" \
+    --eequaam_chunk_size="$EEQUAAM_CHUNK_SIZE" \
+    --eequaam_base_timeout_seconds="$EEQUAAM_BASE_TIMEOUT_SECONDS" \
+    --eequaam_timeout_seconds_per_reaction="$EEQUAAM_TIMEOUT_SECONDS_PER_REACTION"
 done
